@@ -205,6 +205,18 @@ def tooltip_line(label: str, value: str, color: str) -> str:
     )
 
 
+def tooltip_bar_line(label: str, used_pct: int, detail: str, color: str, width: int = 10) -> str:
+    """One tooltip row: bold label + compact bar + detail text."""
+    filled = round(min(100, max(0, used_pct)) / 100 * width)
+    bar = "█" * filled + "░" * (width - filled)
+    return (
+        f"<span fgcolor=\"{saxutils.escape(color)}\" weight=\"Bold\">"
+        f"{saxutils.escape(label)}:</span>"
+        f" <tt>{saxutils.escape(bar)}</tt>"
+        f" {saxutils.escape(detail)}"
+    )
+
+
 def tooltip_header(text: str) -> str:
     return f"<span weight=\"Bold\">{saxutils.escape(text)}</span>"
 
@@ -982,9 +994,8 @@ def copilot_text_for_mode(mode: str, f: dict) -> str:
 
 def copilot_tooltip_lines(f: dict, color: str) -> list[str]:
     return [
-        tooltip_line("Monthly",   f"{f['remaining']} remaining ({f['used']} used of {f['quota']})", color),
-        tooltip_line("Used",      f"{f['pct_used']}%", color),
-        tooltip_line("Reset",     f['reset'], color),
+        tooltip_bar_line("Monthly", f['pct_used'],
+            f"{f['remaining']}/{f['quota']} left · resets {f['reset']}", color),
     ]
 
 
@@ -1064,16 +1075,14 @@ def codex_text_for_mode(mode: str, f: dict) -> str:
 
 def codex_tooltip_lines(f: dict, color: str) -> list[str]:
     lines = [
-        tooltip_line("Session", f"{f['session_remaining']}% remaining ({f['session_used']}% used, {f['session_elapsed']}% elapsed)", color),
-        tooltip_line("Session Reset", f['session_reset'], color),
-        tooltip_line("Weekly",  f"{f['weekly_remaining']}% remaining ({f['weekly_used']}% used, {f['weekly_elapsed']}% elapsed)", color),
-        tooltip_line("Weekly Reset",  f['weekly_reset'],  color),
+        tooltip_bar_line("Session", f['session_used'],
+            f"{f['session_remaining']}% left · {f['session_elapsed']}% elapsed · resets {f['session_reset']}", color),
+        tooltip_bar_line("Weekly",  f['weekly_used'],
+            f"{f['weekly_remaining']}% left · {f['weekly_elapsed']}% elapsed · resets {f['weekly_reset']}", color),
     ]
     if f["review_reset"]:
-        lines += [
-            tooltip_line("Review", f"{f['review_remaining']}% remaining ({f['review_used']}% used, {f['review_elapsed']}% elapsed)", color),
-            tooltip_line("Review Reset", f["review_reset"], color),
-        ]
+        lines.append(tooltip_bar_line("Review", f['review_used'],
+            f"{f['review_remaining']}% left · {f['review_elapsed']}% elapsed · resets {f['review_reset']}", color))
     lines.append(tooltip_line("Credits", f"local {f['credits_local']}, cloud {f['credits_cloud']}", color))
     return lines
 
@@ -1176,20 +1185,22 @@ def claude_text_for_mode(mode: str, f: dict) -> str:
 
 def claude_tooltip_lines(f: dict, color: str) -> list[str]:
     lines = [
-        tooltip_line("5-hour",       f"{f['fh_remaining']}% remaining ({f['fh_used']}% used, {f['fh_elapsed']}% elapsed)", color),
-        tooltip_line("5h Reset",     f['fh_reset'],  color),
-        tooltip_line("7-day",        f"{f['sd_remaining']}% remaining ({f['sd_used']}% used, {f['sd_elapsed']}% elapsed)", color),
-        tooltip_line("7d Reset",     f['sd_reset'],  color),
+        tooltip_bar_line("5-hour", f['fh_used'],
+            f"{f['fh_remaining']}% left · {f['fh_elapsed']}% elapsed · resets {f['fh_reset']}", color),
+        tooltip_bar_line("7-day",  f['sd_used'],
+            f"{f['sd_remaining']}% left · {f['sd_elapsed']}% elapsed · resets {f['sd_reset']}", color),
     ]
     if f["op_used"] or f["so_used"]:
         lines += [
-            tooltip_line("Opus (7d)",   f"{f['op_remaining']}% remaining ({f['op_used']}% used)", color),
-            tooltip_line("Sonnet (7d)", f"{f['so_remaining']}% remaining ({f['so_used']}% used)", color),
+            tooltip_bar_line("Opus (7d)",   f['op_used'],
+                f"{f['op_remaining']}% left · resets {f['op_reset']}", color),
+            tooltip_bar_line("Sonnet (7d)", f['so_used'],
+                f"{f['so_remaining']}% left · resets {f['so_reset']}", color),
         ]
     if f["extra_enabled"]:
-        lines.append(tooltip_line(
-            "Extra",
-            f"{f['extra_remaining']}% remaining · {f['extra_used_cr']}/{f['extra_limit_cr']} credits",
+        lines.append(tooltip_bar_line(
+            "Extra", f['extra_util'],
+            f"{f['extra_remaining']}% left · {f['extra_used_cr']}/{f['extra_limit_cr']} credits",
             color,
         ))
     return lines
