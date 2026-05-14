@@ -18,7 +18,7 @@ Shows usage for any combination of sources side-by-side in the XFCE panel — no
   1. `~/.claude/.credentials.json` — written automatically by **Claude Code** (`claude` CLI). No extra setup needed if you already use Claude Code.
   2. `~/.config/claude-usage-bar/credentials.json` — written by the macOS [claude-usage-bar](https://github.com/Blimp-Labs/claude-usage-bar) app.
   3. `~/.config/claude-usage-bar/token` — legacy plain-text access token fallback.
-- **Copilot:** a config file at `~/.config/codexbar-xfce-genmon/copilot.conf` (see [Copilot setup](#copilot-setup) below). Copilot is silently skipped if the file does not exist.
+- **Copilot:** a `copilot.conf` config file (see [Copilot setup](#copilot-setup) below). The script looks for it first in the repo directory, then at `~/.config/codexbar-xfce-genmon/copilot.conf`. Copilot is silently skipped if neither exists.
 
 ## Setup
 
@@ -58,20 +58,25 @@ No repository access is needed.
 
 ### 2. Create the config file
 
+Copy the included example and fill in your token:
+
+```bash
+cp copilot.conf.example copilot.conf
+# edit copilot.conf and replace the placeholder token
+```
+
+Or create it manually at `~/.config/codexbar-xfce-genmon/copilot.conf` if you prefer to keep it outside the repo:
+
 ```bash
 mkdir -p ~/.config/codexbar-xfce-genmon
 cat > ~/.config/codexbar-xfce-genmon/copilot.conf <<'EOF'
-# GitHub personal access token (fine-grained, User > Plan: read-only)
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# Your monthly premium-request quota.
-# Copilot Pro = 300, Copilot Pro+ = 1500. Default: 300.
 COPILOT_QUOTA=300
 EOF
 chmod 600 ~/.config/codexbar-xfce-genmon/copilot.conf
 ```
 
-Replace `ghp_xxx...` with your actual token. The `COPILOT_QUOTA` line is optional — defaults to `300` if omitted.
+`COPILOT_QUOTA` is optional — defaults to `300` (Copilot Pro). Set to `1500` for Copilot Pro+.
 
 ### 3. Verify
 
@@ -81,6 +86,10 @@ codexbar-xfce-genmon --model=copilot --popup
 
 Expected output:
 
+```
+GitHub Copilot
+────────────────────────────────────────────────────────
+  Monthly  ███░░░░░░░░░░░░░░░░░   16% used  ·  44% elapsed · resets 18d
 ```
 GitHub Copilot
 ────────────────────────────────────────────
@@ -148,13 +157,13 @@ If you see `[CP!]` in the panel, run `codexbar-xfce-genmon --model=copilot` in a
 
 | Mode | Display |
 |---|---|
-| `copilot:usage` | `[CP] 92% left · 18d` |
+| `copilot:usage` | `[CP] 8% left · 17d` |
 
 ### Cross-source modes
 
 | Mode | Display |
 |---|---|
-| `combined` | `CX 58% · CL 67% · CP 142/300 · 2h 14m` |
+| `combined` | `CX 0% · CL 0% · CP 8% · 0h 08m` |
 | `rotate` | cycles through all active modes (default) |
 
 Legacy bare modes (`remaining`, `used`, `weekly`, `credits`) are mapped to their `codex:` equivalents for backwards compatibility.
@@ -194,22 +203,22 @@ Output example:
 
 ```
 Codex
-────────────────────────────────────────────
-  Session  ████████████████████  FULL        · resets in 1h 12m
-  Weekly   █████████████░░░░░░░   36% left  · resets in 3d 17h
+────────────────────────────────────────────────────────
+  5-hour   ████████████████████  FULL       ·  97% elapsed · resets 0h 08m
+  7-day    █████████████░░░░░░░   64% used  ·  47% elapsed · resets 3d 16h
   Credits  local 0  ·  cloud 0
 
 Claude
-────────────────────────────────────────────
-  5-hour   ████████████████████  FULL        · resets in 3h 44m
-  7-day    █░░░░░░░░░░░░░░░░░░░   95% left  · resets in 6d 5h
+────────────────────────────────────────────────────────
+  5-hour   ████████████████████  FULL       ·  46% elapsed · resets 2h 38m
+  7-day    █░░░░░░░░░░░░░░░░░░░    5% used  ·  11% elapsed · resets 6d 4h
 
 GitHub Copilot
-────────────────────────────────────────────
-  Monthly  ███░░░░░░░░░░░░░░░░░   84% left  · resets in 18d
+────────────────────────────────────────────────────────
+  Monthly  ███████████████████░   94% used  ·  44% elapsed · resets 17d
 ```
 
-The bars are filled to represent **used** quota. `FULL` appears in place of a percentage when a limit is exhausted.
+Each row shows: a 20-block bar filled to **used** quota, then `used% · elapsed% · resets`. `FULL` appears when a limit is exhausted. `elapsed%` is how far through the reset window you are in time — useful for pacing (high used + low elapsed = burning fast).
 
 Model flags work with `--popup` too:
 
@@ -221,7 +230,7 @@ codexbar-xfce-genmon --popup --model=claude --model=copilot
 ## Click behavior
 
 - Clicking the icon or text in the panel triggers `--popup` in a terminal.
-- Hovering shows the full tooltip with Pango-formatted detail.
+- Hovering shows a tooltip with a progress bar per window, in the same `used · elapsed · resets` format as the popup.
 
 ## Environment variables
 
@@ -290,7 +299,7 @@ CODEXBAR_XFCE_ROTATE_MODES='codex:remaining,claude:5h,copilot:usage,combined' \
 
 - Codex credentials are read from `~/.codex/auth.json`; token is refreshed automatically when near expiry.
 - Claude credentials are read from `~/.claude/.credentials.json` (Claude Code) or the fallback paths above; token is refreshed automatically when a refresh token is available.
-- Copilot credentials are read from `~/.config/codexbar-xfce-genmon/copilot.conf`; username is cached for 1 hour in `~/.cache/codexbar-xfce-genmon/copilot_user.json`.
+- Copilot config is read from `copilot.conf` in the repo directory first, then `~/.config/codexbar-xfce-genmon/copilot.conf`; username is cached for 1 hour in `~/.cache/codexbar-xfce-genmon/copilot_user.json`.
 - Usage data is cached in `~/.cache/codexbar-xfce-genmon/` (`usage.json` for Codex, `claude_usage.json` for Claude, `copilot_usage.json` for Copilot).
 - When serving from a stale cache (network/auth error), a `~` is appended to the panel text and a "Data Age" line appears in the tooltip.
 - The color threshold is driven by the worst-case usage percentage across all active sources.
