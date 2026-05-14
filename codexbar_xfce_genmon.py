@@ -276,7 +276,7 @@ def _pbar(used_pct: int, width: int = 20) -> str:
 def _popup_detail(used_pct: int, elapsed_pct: int, reset: str) -> str:
     """Standardised detail column: used · elapsed · resets."""
     if used_pct >= 100:
-        return f"FULL        · {elapsed_pct:3d}% elapsed · resets {reset}"
+        return f"FULL       · {elapsed_pct:3d}% elapsed · resets {reset}"
     return f"{used_pct:3d}% used  · {elapsed_pct:3d}% elapsed · resets {reset}"
 
 
