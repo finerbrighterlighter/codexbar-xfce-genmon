@@ -148,7 +148,7 @@ If you see `[CP!]` in the panel, run `codexbar-xfce-genmon --model=copilot` in a
 
 | Mode | Display |
 |---|---|
-| `copilot:usage` | `[CP] 142/300 · 18d` |
+| `copilot:usage` | `[CP] 92% left · 18d` |
 
 ### Cross-source modes
 

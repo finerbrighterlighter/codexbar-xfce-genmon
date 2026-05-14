@@ -976,7 +976,7 @@ def parse_copilot(raw: dict) -> dict:
 
 def copilot_text_for_mode(mode: str, f: dict) -> str:
     if mode == "copilot:usage":
-        return f"[CP] {f['used']}/{f['quota']} · {f['reset']}"
+        return f"[CP] {f['pct_remaining']}% left · {f['reset']}"
     raise ValueError(f"unknown copilot mode '{mode}'")
 
 
