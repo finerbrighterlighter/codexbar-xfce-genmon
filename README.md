@@ -1,8 +1,8 @@
 # codexbar-xfce-genmon
 
-XFCE Generic Monitor wrapper for OpenAI Codex and Anthropic Claude usage.
+XFCE Generic Monitor wrapper for OpenAI Codex, Anthropic Claude, and GitHub Copilot usage.
 
-Shows usage for Codex, Claude, or both side-by-side in the XFCE panel — no Waybar or external packages required.
+Shows usage for any combination of sources side-by-side in the XFCE panel — no Waybar or external packages required.
 
 ## Files
 
@@ -18,6 +18,7 @@ Shows usage for Codex, Claude, or both side-by-side in the XFCE panel — no Way
   1. `~/.claude/.credentials.json` — written automatically by **Claude Code** (`claude` CLI). No extra setup needed if you already use Claude Code.
   2. `~/.config/claude-usage-bar/credentials.json` — written by the macOS [claude-usage-bar](https://github.com/Blimp-Labs/claude-usage-bar) app.
   3. `~/.config/claude-usage-bar/token` — legacy plain-text access token fallback.
+- **Copilot:** a config file at `~/.config/codexbar-xfce-genmon/copilot.conf` (see [Copilot setup](#copilot-setup) below). Copilot is silently skipped if the file does not exist.
 
 ## Setup
 
@@ -42,22 +43,74 @@ ls -la ~/.local/bin/codexbar-xfce-genmon
 
 Then use `codexbar-xfce-genmon` directly without specifying a path.
 
+## Copilot setup
+
+Copilot tracks **premium request** usage (the monthly quota of 300 for Copilot Pro, higher for Copilot Pro+).
+
+### 1. Create a GitHub personal access token
+
+Go to <https://github.com/settings/personal-access-tokens> and create a **fine-grained** token with:
+
+- **Resource owner:** your personal account
+- **Permissions → User permissions → Plan:** Read-only
+
+No repository access is needed.
+
+### 2. Create the config file
+
+```bash
+mkdir -p ~/.config/codexbar-xfce-genmon
+cat > ~/.config/codexbar-xfce-genmon/copilot.conf <<'EOF'
+# GitHub personal access token (fine-grained, User > Plan: read-only)
+GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Your monthly premium-request quota.
+# Copilot Pro = 300, Copilot Pro+ = 1500. Default: 300.
+COPILOT_QUOTA=300
+EOF
+chmod 600 ~/.config/codexbar-xfce-genmon/copilot.conf
+```
+
+Replace `ghp_xxx...` with your actual token. The `COPILOT_QUOTA` line is optional — defaults to `300` if omitted.
+
+### 3. Verify
+
+```bash
+codexbar-xfce-genmon --model=copilot --popup
+```
+
+Expected output:
+
+```
+GitHub Copilot
+────────────────────────────────────────────
+  Monthly  ███░░░░░░░░░░░░░░░░░   84% left  · resets in 18d
+```
+
+If you see `[CP!]` in the panel, run `codexbar-xfce-genmon --model=copilot` in a terminal to read the error from stderr.
+
+### Token troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `GitHub API HTTP 401` | Token invalid or expired | Regenerate the token at GitHub |
+| `GitHub API HTTP 403` | Token lacks `Plan: read` permission | Recreate the token with the correct permission |
+| `Could not determine GitHub username` | Token has no `User: read` permission | Fine-grained tokens include this by default; check token scopes |
+
 ## XFCE Panel Command
 
 ```bash
-# Both sources, rotating display (default)
+# All configured sources, rotating display (default)
 /path/to/codexbar-xfce-genmon
 
-# Codex only
-/path/to/codexbar-xfce-genmon --codex-only
+# Specific sources
+/path/to/codexbar-xfce-genmon --model=codex
+/path/to/codexbar-xfce-genmon --model=claude
+/path/to/codexbar-xfce-genmon --model=copilot
 
-# Claude only
-/path/to/codexbar-xfce-genmon --claude-only
-
-# Explicit source flag
-/path/to/codexbar-xfce-genmon --source=both
-/path/to/codexbar-xfce-genmon --source=codex
-/path/to/codexbar-xfce-genmon --source=claude
+# Multiple sources (repeatable)
+/path/to/codexbar-xfce-genmon --model=codex --model=claude
+/path/to/codexbar-xfce-genmon --model=claude --model=copilot
 
 # Hide the icon
 /path/to/codexbar-xfce-genmon --no-icon
@@ -66,6 +119,7 @@ Then use `codexbar-xfce-genmon` directly without specifying a path.
 /path/to/codexbar-xfce-genmon combined
 /path/to/codexbar-xfce-genmon codex:remaining
 /path/to/codexbar-xfce-genmon claude:5h
+/path/to/codexbar-xfce-genmon copilot:usage
 ```
 
 ## Modes
@@ -90,26 +144,43 @@ Then use `codexbar-xfce-genmon` directly without specifying a path.
 | `claude:sonnet` | `[CL] Sonnet 88% · 3d 12h` |
 | `claude:extra` | `[CL] Extra 100% · 0/40cr` |
 
+### Copilot modes
+
+| Mode | Display |
+|---|---|
+| `copilot:usage` | `[CP] 142/300 · 18d` |
+
 ### Cross-source modes
 
 | Mode | Display |
 |---|---|
-| `combined` | `CX 58% · CL 67% · 2h 14m` |
+| `combined` | `CX 58% · CL 67% · CP 142/300 · 2h 14m` |
 | `rotate` | cycles through all active modes (default) |
 
 Legacy bare modes (`remaining`, `used`, `weekly`, `credits`) are mapped to their `codex:` equivalents for backwards compatibility.
 
-## Source flags
+## Model flags
+
+The `--model=` flag controls which sources are fetched and displayed. It is repeatable and can appear anywhere in the argument list.
 
 | Flag | Effect |
 |---|---|
-| `--source=both` | show both Codex and Claude (default) |
-| `--source=codex` | Codex only |
-| `--source=claude` | Claude only |
-| `--codex-only` | shorthand for `--source=codex` |
-| `--claude-only` | shorthand for `--source=claude` |
+| `--model=codex` | Codex only |
+| `--model=claude` | Claude only |
+| `--model=copilot` | Copilot only (requires `copilot.conf`) |
+| `--model=codex --model=claude` | Codex + Claude |
+| *(no flag)* | all configured sources (Copilot auto-included if `copilot.conf` exists) |
 
-Flags can appear in any position relative to the mode argument.
+Legacy source flags are still accepted:
+
+| Legacy flag | Equivalent |
+|---|---|
+| `--source=codex` | `--model=codex` |
+| `--source=claude` | `--model=claude` |
+| `--source=both` | `--model=codex --model=claude` |
+| `--codex-only` | `--model=codex` |
+| `--claude-only` | `--model=claude` |
+| `--copilot-only` | `--model=copilot` |
 
 ## Popup
 
@@ -132,15 +203,19 @@ Claude
 ────────────────────────────────────────────
   5-hour   ████████████████████  FULL        · resets in 3h 44m
   7-day    █░░░░░░░░░░░░░░░░░░░   95% left  · resets in 6d 5h
+
+GitHub Copilot
+────────────────────────────────────────────
+  Monthly  ███░░░░░░░░░░░░░░░░░   84% left  · resets in 18d
 ```
 
-The bars are filled to represent **used** quota. `FULL` appears in place of a percentage when a limit is exhausted. Clicking the panel text also triggers this output via `notify-send` is no longer used — the popup is plain terminal output.
+The bars are filled to represent **used** quota. `FULL` appears in place of a percentage when a limit is exhausted.
 
-Source flags work with `--popup` too:
+Model flags work with `--popup` too:
 
 ```bash
-codexbar-xfce-genmon --popup --claude-only
-codexbar-xfce-genmon --popup --codex-only
+codexbar-xfce-genmon --popup --model=copilot
+codexbar-xfce-genmon --popup --model=claude --model=copilot
 ```
 
 ## Click behavior
@@ -152,7 +227,13 @@ codexbar-xfce-genmon --popup --codex-only
 
 ### Source
 
-- `CODEXBAR_XFCE_SOURCE`: `both` | `codex` | `claude`
+- `CODEXBAR_XFCE_MODELS`: comma-separated list of sources to enable (`codex`, `claude`, `copilot`). Empty = all configured.
+- `CODEXBAR_XFCE_SOURCE`: legacy alias (`both` | `codex` | `claude`)
+
+### Copilot
+
+- `CODEXBAR_XFCE_COPILOT_TOKEN`: GitHub token (overrides `copilot.conf`)
+- `CODEXBAR_XFCE_COPILOT_QUOTA`: monthly quota integer (overrides `copilot.conf`, default `300`)
 
 ### Rotation
 
@@ -161,7 +242,7 @@ codexbar-xfce-genmon --popup --codex-only
 
 ```bash
 CODEXBAR_XFCE_ROTATE_SECONDS=10 \
-CODEXBAR_XFCE_ROTATE_MODES='codex:remaining,claude:5h,combined' \
+CODEXBAR_XFCE_ROTATE_MODES='codex:remaining,claude:5h,copilot:usage,combined' \
   ./codexbar-xfce-genmon rotate
 ```
 
@@ -197,6 +278,9 @@ CODEXBAR_XFCE_ROTATE_MODES='codex:remaining,claude:5h,combined' \
 - `CODEXBAR_XFCE_ICON_CLAUDE_OPUS`
 - `CODEXBAR_XFCE_ICON_CLAUDE_SONNET`
 - `CODEXBAR_XFCE_ICON_CLAUDE_EXTRA`
+
+**Copilot:**
+- `CODEXBAR_XFCE_ICON_COPILOT`
 
 **Cross-source:**
 - `CODEXBAR_XFCE_ICON_BOTH_COMBINED`
@@ -206,183 +290,11 @@ CODEXBAR_XFCE_ROTATE_MODES='codex:remaining,claude:5h,combined' \
 
 - Codex credentials are read from `~/.codex/auth.json`; token is refreshed automatically when near expiry.
 - Claude credentials are read from `~/.claude/.credentials.json` (Claude Code) or the fallback paths above; token is refreshed automatically when a refresh token is available.
-- Usage data is cached in `~/.cache/codexbar-xfce-genmon/` (`usage.json` for Codex, `claude_usage.json` for Claude).
+- Copilot credentials are read from `~/.config/codexbar-xfce-genmon/copilot.conf`; username is cached for 1 hour in `~/.cache/codexbar-xfce-genmon/copilot_user.json`.
+- Usage data is cached in `~/.cache/codexbar-xfce-genmon/` (`usage.json` for Codex, `claude_usage.json` for Claude, `copilot_usage.json` for Copilot).
 - When serving from a stale cache (network/auth error), a `~` is appended to the panel text and a "Data Age" line appears in the tooltip.
-- The color threshold is driven by the worst-case usage across all active sources.
-
-## License
-
-This wrapper is a local utility project.
-
-XFCE Generic Monitor wrapper for OpenAI Codex and Anthropic Claude usage.
-
-Shows usage for Codex, Claude, or both side-by-side in the XFCE panel — no Waybar or external packages required.
-
-## Files
-
-- `codexbar-xfce-genmon`: Bash entrypoint for XFCE GenMon
-- `codexbar_xfce_genmon.py`: Python logic for auth refresh, usage fetch, caching, formatting, tooltips, colors, and click actions
-
-## Requirements
-
-- `python3`
-- `notify-send`
-- XFCE panel with `xfce4-genmon-plugin`
-- **Codex:** a valid login in `~/.codex/auth.json` (run `codex login`)
-- **Claude:** credentials from any of these sources (checked in order):
-  1. `~/.claude/.credentials.json` — written automatically by **Claude Code** (`claude` CLI). No extra setup needed if you already use Claude Code.
-  2. `~/.config/claude-usage-bar/credentials.json` — written by the macOS [claude-usage-bar](https://github.com/Blimp-Labs/claude-usage-bar) app.
-  3. `~/.config/claude-usage-bar/token` — legacy plain-text access token fallback.
-
-## Setup
-
-1. Install the XFCE Generic Monitor plugin if not already present.
-2. Add `Generic Monitor` to your XFCE panel.
-3. Set the command to one of the examples below.
-4. Set the refresh interval to `30` or `60` seconds.
-
-## XFCE Panel Command
-
-```bash
-# Both sources, rotating display (default)
-/path/to/codexbar-xfce-genmon
-
-# Codex only
-/path/to/codexbar-xfce-genmon --codex-only
-
-# Claude only
-/path/to/codexbar-xfce-genmon --claude-only
-
-# Explicit source flag
-/path/to/codexbar-xfce-genmon --source=both
-/path/to/codexbar-xfce-genmon --source=codex
-/path/to/codexbar-xfce-genmon --source=claude
-
-# Hide the icon
-/path/to/codexbar-xfce-genmon --no-icon
-
-# Fixed mode instead of rotating
-/path/to/codexbar-xfce-genmon combined
-/path/to/codexbar-xfce-genmon codex:remaining
-/path/to/codexbar-xfce-genmon claude:5h
-```
-
-## Modes
-
-### Codex modes
-
-| Mode | Display |
-|---|---|
-| `codex:remaining` | `[CX] 58% left · 2h 14m` |
-| `codex:used` | `[CX] 42% used · 2h 14m` |
-| `codex:weekly` | `[CX] W 83% left · 4d 6h` |
-| `codex:combined` | `[CX] S 58% · W 83%` |
-| `codex:credits` | `[CX] L 120-180 · C 40-60` |
-
-### Claude modes
-
-| Mode | Display |
-|---|---|
-| `claude:5h` | `[CL] 67% left · 1h 05m` |
-| `claude:7d` | `[CL] W 91% left · 3d 12h` |
-| `claude:opus` | `[CL] Opus 95% · 3d 12h` |
-| `claude:sonnet` | `[CL] Sonnet 88% · 3d 12h` |
-| `claude:extra` | `[CL] Extra 100% · 0/40cr` |
-
-### Cross-source modes
-
-| Mode | Display |
-|---|---|
-| `combined` | `CX 58% · CL 67%` |
-| `rotate` | cycles through all active modes (default) |
-
-Legacy bare modes (`remaining`, `used`, `weekly`, `credits`) are mapped to their `codex:` equivalents for backwards compatibility.
-
-## Source flags
-
-| Flag | Effect |
-|---|---|
-| `--source=both` | show both Codex and Claude (default) |
-| `--source=codex` | Codex only |
-| `--source=claude` | Claude only |
-| `--codex-only` | shorthand for `--source=codex` |
-| `--claude-only` | shorthand for `--source=claude` |
-
-Flags can appear in any position relative to the mode argument.
-
-## Click behavior
-
-- Clicking the icon or text shows the full tooltip as a `notify-send` popup.
-- Hovering shows the full tooltip in the panel.
-- The popup includes both sources when both are active.
-
-```bash
-# Trigger popup manually
-./codexbar-xfce-genmon popup combined
-./codexbar-xfce-genmon popup claude:5h --claude-only
-```
-
-## Environment variables
-
-### Source
-
-- `CODEXBAR_XFCE_SOURCE`: `both` | `codex` | `claude`
-
-### Rotation
-
-- `CODEXBAR_XFCE_ROTATE_SECONDS`: seconds per mode slot (default `15`)
-- `CODEXBAR_XFCE_ROTATE_MODES`: comma-separated list of modes
-
-```bash
-CODEXBAR_XFCE_ROTATE_SECONDS=10 \
-CODEXBAR_XFCE_ROTATE_MODES='codex:remaining,claude:5h,combined' \
-  ./codexbar-xfce-genmon rotate
-```
-
-### Display
-
-- `CODEXBAR_XFCE_SHOW_ICON`: set to `0` to hide the icon
-- `--no-icon`: command-line shorthand
-
-### Click actions
-
-- `CODEXBAR_XFCE_ICON_CLICK`: custom command on icon click
-- `CODEXBAR_XFCE_TEXT_CLICK`: custom command on text click
-
-### Colors
-
-- `CODEXBAR_XFCE_COLOR_LOW` (default `#98c379`)
-- `CODEXBAR_XFCE_COLOR_MID` (default `#e5c07b`)
-- `CODEXBAR_XFCE_COLOR_HIGH` (default `#d19a66`)
-- `CODEXBAR_XFCE_COLOR_CRITICAL` (default `#e06c75`)
-
-### Icons
-
-**Codex:**
-- `CODEXBAR_XFCE_ICON_REMAINING`
-- `CODEXBAR_XFCE_ICON_USED`
-- `CODEXBAR_XFCE_ICON_WEEKLY`
-- `CODEXBAR_XFCE_ICON_COMBINED`
-- `CODEXBAR_XFCE_ICON_CREDITS`
-
-**Claude:**
-- `CODEXBAR_XFCE_ICON_CLAUDE_5H`
-- `CODEXBAR_XFCE_ICON_CLAUDE_7D`
-- `CODEXBAR_XFCE_ICON_CLAUDE_OPUS`
-- `CODEXBAR_XFCE_ICON_CLAUDE_SONNET`
-- `CODEXBAR_XFCE_ICON_CLAUDE_EXTRA`
-
-**Cross-source:**
-- `CODEXBAR_XFCE_ICON_BOTH_COMBINED`
-- `CODEXBAR_XFCE_ICON_ROTATE`
-
-## Notes
-
-- Codex credentials are read from `~/.codex/auth.json`; token is refreshed automatically when near expiry.
-- Claude credentials are read from `~/.config/claude-usage-bar/credentials.json` (or the legacy `token` file); token is refreshed automatically when a refresh token is available.
-- Usage data is cached in `~/.cache/codexbar-xfce-genmon/` (`usage.json` for Codex, `claude_usage.json` for Claude).
-- When serving from a stale cache (network/auth error), a `~` is appended to the panel text and a "Data Age" line appears in the tooltip.
-- The color threshold is driven by the worst-case usage across all active sources.
+- The color threshold is driven by the worst-case usage percentage across all active sources.
+- `[CX!]` / `[CL!]` / `[CP!]` in the panel text indicates a fetch error for that source. Run the script manually in a terminal to see the error on stderr.
 
 ## License
 
