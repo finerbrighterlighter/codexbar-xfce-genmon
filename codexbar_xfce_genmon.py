@@ -1012,7 +1012,7 @@ def copilot_text_for_mode(mode: str, f: dict) -> str:
 def copilot_tooltip_lines(f: dict, color: str) -> list[str]:
     return [
         tooltip_bar_line("Monthly", f['pct_used'],
-            f"{f['pct_used']}% used · {f['elapsed']}% elapsed · resets {f['reset']}", color),
+            f"{f['pct_used']:3d}% used · {f['elapsed']:3d}% elapsed · resets {f['reset']}", color),
     ]
 
 
@@ -1093,13 +1093,13 @@ def codex_text_for_mode(mode: str, f: dict) -> str:
 def codex_tooltip_lines(f: dict, color: str) -> list[str]:
     lines = [
         tooltip_bar_line("Session", f['session_used'],
-            f"{f['session_used']}% used · {f['session_elapsed']}% elapsed · resets {f['session_reset']}", color),
+            f"{f['session_used']:3d}% used · {f['session_elapsed']:3d}% elapsed · resets {f['session_reset']}", color),
         tooltip_bar_line("Weekly",  f['weekly_used'],
-            f"{f['weekly_used']}% used · {f['weekly_elapsed']}% elapsed · resets {f['weekly_reset']}", color),
+            f"{f['weekly_used']:3d}% used · {f['weekly_elapsed']:3d}% elapsed · resets {f['weekly_reset']}", color),
     ]
     if f["review_reset"]:
         lines.append(tooltip_bar_line("Review", f['review_used'],
-            f"{f['review_used']}% used · {f['review_elapsed']}% elapsed · resets {f['review_reset']}", color))
+            f"{f['review_used']:3d}% used · {f['review_elapsed']:3d}% elapsed · resets {f['review_reset']}", color))
     lines.append(tooltip_line("Credits", f"local {f['credits_local']}, cloud {f['credits_cloud']}", color))
     return lines
 
@@ -1203,21 +1203,21 @@ def claude_text_for_mode(mode: str, f: dict) -> str:
 def claude_tooltip_lines(f: dict, color: str) -> list[str]:
     lines = [
         tooltip_bar_line("5-hour", f['fh_used'],
-            f"{f['fh_used']}% used · {f['fh_elapsed']}% elapsed · resets {f['fh_reset']}", color),
+            f"{f['fh_used']:3d}% used · {f['fh_elapsed']:3d}% elapsed · resets {f['fh_reset']}", color),
         tooltip_bar_line("7-day",  f['sd_used'],
-            f"{f['sd_used']}% used · {f['sd_elapsed']}% elapsed · resets {f['sd_reset']}", color),
+            f"{f['sd_used']:3d}% used · {f['sd_elapsed']:3d}% elapsed · resets {f['sd_reset']}", color),
     ]
     if f["op_used"] or f["so_used"]:
         lines += [
             tooltip_bar_line("Opus (7d)",   f['op_used'],
-                f"{f['op_used']}% used · {f['op_elapsed']}% elapsed · resets {f['op_reset']}", color),
+                f"{f['op_used']:3d}% used · {f['op_elapsed']:3d}% elapsed · resets {f['op_reset']}", color),
             tooltip_bar_line("Sonnet (7d)", f['so_used'],
-                f"{f['so_used']}% used · {f['so_elapsed']}% elapsed · resets {f['so_reset']}", color),
+                f"{f['so_used']:3d}% used · {f['so_elapsed']:3d}% elapsed · resets {f['so_reset']}", color),
         ]
     if f["extra_enabled"]:
         lines.append(tooltip_bar_line(
             "Extra", f['extra_util'],
-            f"{f['extra_util']}% used · {f['extra_used_cr']}/{f['extra_limit_cr']} credits",
+            f"{f['extra_util']:3d}% used · {f['extra_used_cr']}/{f['extra_limit_cr']} credits",
             color,
         ))
     return lines
