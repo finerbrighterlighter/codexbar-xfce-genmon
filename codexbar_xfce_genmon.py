@@ -199,21 +199,29 @@ def pango(text: str, color: str, weight: str = "Semibold") -> str:
 
 
 def tooltip_line(label: str, value: str, color: str) -> str:
+    padded = label.ljust(_TOOLTIP_LABEL_WIDTH)
     return (
-        f"<span fgcolor=\"{saxutils.escape(color)}\" weight=\"Bold\">"
-        f"{saxutils.escape(label)}:</span> {saxutils.escape(value)}"
+        f"<tt>"
+        f"<span fgcolor=\"{saxutils.escape(color)}\" weight=\"Bold\">{saxutils.escape(padded)}</span>"
+        f"  {saxutils.escape(value)}"
+        f"</tt>"
     )
 
 
+_TOOLTIP_LABEL_WIDTH = 11  # len("Sonnet (7d)") — longest label across all sources
+
+
 def tooltip_bar_line(label: str, used_pct: int, detail: str, color: str, width: int = 10) -> str:
-    """One tooltip row: bold label + compact bar + detail text."""
+    """One tooltip row, fully monospaced so bars and details align across rows."""
     filled = round(min(100, max(0, used_pct)) / 100 * width)
     bar = "█" * filled + "░" * (width - filled)
+    # Pad label to fixed width inside the monospace block
+    padded = label.ljust(_TOOLTIP_LABEL_WIDTH)
     return (
-        f"<span fgcolor=\"{saxutils.escape(color)}\" weight=\"Bold\">"
-        f"{saxutils.escape(label)}:</span>"
-        f" <tt>{saxutils.escape(bar)}</tt>"
-        f" {saxutils.escape(detail)}"
+        f"<tt>"
+        f"<span fgcolor=\"{saxutils.escape(color)}\" weight=\"Bold\">{saxutils.escape(padded)}</span>"
+        f"  {saxutils.escape(bar)}  {saxutils.escape(detail)}"
+        f"</tt>"
     )
 
 
