@@ -2,20 +2,40 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+# Strip flags before positional parsing so flags can appear in any position.
+POSITIONAL=()
 ACTION="panel"
-MODE="${1:-remaining}"
+for arg in "$@"; do
+  case "$arg" in
+    --no-icon)
+      export CODEXBAR_XFCE_SHOW_ICON=0
+      ;;
+    --popup)
+      ACTION="popup"
+      ;;
+    --source=codex|--source=claude|--source=both)
+      export CODEXBAR_XFCE_SOURCE="${arg#--source=}"
+      ;;
+    --codex-only)
+      export CODEXBAR_XFCE_SOURCE=codex
+      ;;
+    --claude-only)
+      export CODEXBAR_XFCE_SOURCE=claude
+      ;;
+    *)
+      POSITIONAL+=("$arg")
+      ;;
+  esac
+done
+
+MODE="${POSITIONAL[0]:-rotate}"
 
 if [[ "$MODE" == "popup" ]]; then
   ACTION="popup"
-  MODE="${2:-remaining}"
+  MODE="${POSITIONAL[1]:-rotate}"
 fi
-
-for arg in "$@"; do
-  if [[ "$arg" == "--no-icon" ]]; then
-    export CODEXBAR_XFCE_SHOW_ICON=0
-  fi
-done
 
 export CODEXBAR_XFCE_WRAPPER="$SCRIPT_DIR/codexbar-xfce-genmon"
 
