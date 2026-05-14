@@ -1092,9 +1092,9 @@ def codex_text_for_mode(mode: str, f: dict) -> str:
 
 def codex_tooltip_lines(f: dict, color: str) -> list[str]:
     lines = [
-        tooltip_bar_line("Session", f['session_used'],
+        tooltip_bar_line("5-hour",  f['session_used'],
             f"{f['session_used']:3d}% used · {f['session_elapsed']:3d}% elapsed · resets {f['session_reset']}", color),
-        tooltip_bar_line("Weekly",  f['weekly_used'],
+        tooltip_bar_line("7-day",   f['weekly_used'],
             f"{f['weekly_used']:3d}% used · {f['weekly_elapsed']:3d}% elapsed · resets {f['weekly_reset']}", color),
     ]
     if f["review_reset"]:
