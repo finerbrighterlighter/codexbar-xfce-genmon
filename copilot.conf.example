@@ -1,0 +1,9 @@
+# GitHub personal access token
+# Create a fine-grained token at: https://github.com/settings/personal-access-tokens
+# Required permission: User permissions → Plan → Read-only
+GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Your monthly premium-request quota.
+# Copilot Pro = 300  |  Copilot Pro+ = 1500
+# Default: 300 (can be omitted for Copilot Pro)
+COPILOT_QUOTA=300

@@ -41,9 +41,11 @@ if not _REQUESTED_MODELS:
     elif _source == "claude":
         _REQUESTED_MODELS = {"claude"}
 
-# Copilot config path — needed to decide whether to auto-include Copilot
-COPILOT_CONF_DIR  = Path.home() / ".config" / "codexbar-xfce-genmon"
-COPILOT_CONF_FILE = COPILOT_CONF_DIR / "copilot.conf"
+# Copilot config path — repo-local file takes priority, then ~/.config fallback
+_COPILOT_CONF_REPO = Path(__file__).parent / "copilot.conf"
+_COPILOT_CONF_HOME = Path.home() / ".config" / "codexbar-xfce-genmon" / "copilot.conf"
+COPILOT_CONF_FILE   = _COPILOT_CONF_REPO if _COPILOT_CONF_REPO.exists() else _COPILOT_CONF_HOME
+COPILOT_CONF_DIR    = COPILOT_CONF_FILE.parent
 COPILOT_CONF_EXISTS = COPILOT_CONF_FILE.exists()
 
 # Resolve which models are actually active
@@ -292,8 +294,9 @@ def build_popup_body(cx: dict | None, cl: dict | None, cp: dict | None = None) -
         sections.append("Claude\n" + sep + "\n" + "\n".join(rows))
 
     if cp is not None:
+        cp_label = f"{'FULL':<9}" if cp['remaining'] <= 0 else f"{cp['remaining']}/{cp['quota']} left"
         rows = [
-            f"  Monthly  {_pbar(cp['pct_used'])}  {_popup_label(cp['remaining'], cp['reset'])}",
+            f"  Monthly  {_pbar(cp['pct_used'])}  {cp_label} · resets in {cp['reset']}",
         ]
         sections.append("GitHub Copilot\n" + sep + "\n" + "\n".join(rows))
 
