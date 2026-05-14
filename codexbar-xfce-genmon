@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 # Strip flags before positional parsing so flags can appear in any position.
 POSITIONAL=()
 ACTION="panel"
+MODELS=()
+
 for arg in "$@"; do
   case "$arg" in
     --no-icon)
@@ -15,20 +17,32 @@ for arg in "$@"; do
     --popup)
       ACTION="popup"
       ;;
-    --source=codex|--source=claude|--source=both)
-      export CODEXBAR_XFCE_SOURCE="${arg#--source=}"
+    --model=codex|--model=claude|--model=copilot)
+      MODELS+=("${arg#--model=}")
       ;;
-    --codex-only)
-      export CODEXBAR_XFCE_SOURCE=codex
+    # Backwards-compatible aliases
+    --source=codex|--codex-only)
+      MODELS+=("codex")
       ;;
-    --claude-only)
-      export CODEXBAR_XFCE_SOURCE=claude
+    --source=claude|--claude-only)
+      MODELS+=("claude")
+      ;;
+    --source=both)
+      MODELS+=("codex" "claude")
+      ;;
+    --copilot-only)
+      MODELS+=("copilot")
       ;;
     *)
       POSITIONAL+=("$arg")
       ;;
   esac
 done
+
+# Export active models as comma-separated string; empty = all configured sources
+if [[ ${#MODELS[@]} -gt 0 ]]; then
+  export CODEXBAR_XFCE_MODELS="$(IFS=,; echo "${MODELS[*]}")"
+fi
 
 MODE="${POSITIONAL[0]:-rotate}"
 

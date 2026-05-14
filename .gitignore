@@ -1,0 +1,4 @@
+copilot.conf
+__pycache__/
+*.pyc
+.gitingore
