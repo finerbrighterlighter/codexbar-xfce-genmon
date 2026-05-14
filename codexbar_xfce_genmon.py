@@ -273,51 +273,53 @@ def _pbar(used_pct: int, width: int = 20) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-def _popup_label(remaining: int, reset: str) -> str:
-    if remaining <= 0:
-        return f"{'FULL':<9} · resets in {reset}"
-    return f"{remaining:3d}% left · resets in {reset}"
+def _popup_detail(used_pct: int, elapsed_pct: int, reset: str) -> str:
+    """Standardised detail column: used · elapsed · resets."""
+    if used_pct >= 100:
+        return f"FULL        · {elapsed_pct:3d}% elapsed · resets {reset}"
+    return f"{used_pct:3d}% used  · {elapsed_pct:3d}% elapsed · resets {reset}"
+
+
+_POPUP_LABEL_W = 7   # len("Monthly") — longest popup row label
 
 
 def build_popup_body(cx: dict | None, cl: dict | None, cp: dict | None = None) -> str:
     """Build a structured plain-text popup body with progress bars."""
-    sep = "─" * 44
+    sep = "─" * 56
     sections: list[str] = []
+
+    def row(label: str, used_pct: int, elapsed_pct: int, reset: str) -> str:
+        return f"  {label:<{_POPUP_LABEL_W}}  {_pbar(used_pct)}  {_popup_detail(used_pct, elapsed_pct, reset)}"
 
     if cx is not None:
         rows = [
-            f"  Session  {_pbar(cx['session_used'])}  {_popup_label(cx['session_remaining'], cx['session_reset'])}",
-            f"  Weekly   {_pbar(cx['weekly_used'])}  {_popup_label(cx['weekly_remaining'], cx['weekly_reset'])}",
+            row("5-hour", cx['session_used'], cx['session_elapsed'], cx['session_reset']),
+            row("7-day",  cx['weekly_used'],  cx['weekly_elapsed'],  cx['weekly_reset']),
         ]
         if cx.get("review_reset"):
-            rows.append(
-                f"  Review   {_pbar(cx['review_used'])}  {_popup_label(cx['review_remaining'], cx['review_reset'])}"
-            )
-        rows.append(f"  Credits  local {cx['credits_local']}  ·  cloud {cx['credits_cloud']}")
+            rows.append(row("Review", cx['review_used'], cx['review_elapsed'], cx['review_reset']))
+        rows.append(f"  {'Credits':<{_POPUP_LABEL_W}}  local {cx['credits_local']}  ·  cloud {cx['credits_cloud']}")
         sections.append("Codex\n" + sep + "\n" + "\n".join(rows))
 
     if cl is not None:
         rows = [
-            f"  5-hour   {_pbar(cl['fh_used'])}  {_popup_label(cl['fh_remaining'], cl['fh_reset'])}",
-            f"  7-day    {_pbar(cl['sd_used'])}  {_popup_label(cl['sd_remaining'], cl['sd_reset'])}",
+            row("5-hour", cl['fh_used'], cl['fh_elapsed'], cl['fh_reset']),
+            row("7-day",  cl['sd_used'], cl['sd_elapsed'], cl['sd_reset']),
         ]
         if cl["op_used"] or cl["so_used"]:
             rows += [
-                f"  Opus     {_pbar(cl['op_used'])}  {_popup_label(cl['op_remaining'], cl['op_reset'])}",
-                f"  Sonnet   {_pbar(cl['so_used'])}  {_popup_label(cl['so_remaining'], cl['so_reset'])}",
+                row("Opus",   cl['op_used'], cl['op_elapsed'], cl['op_reset']),
+                row("Sonnet", cl['so_used'], cl['so_elapsed'], cl['so_reset']),
             ]
         if cl["extra_enabled"]:
             rows.append(
-                f"  Extra    {_pbar(cl['extra_util'])}  {cl['extra_remaining']:3d}% left "
-                f"· {cl['extra_used_cr']}/{cl['extra_limit_cr']} cr"
+                f"  {'Extra':<{_POPUP_LABEL_W}}  {_pbar(cl['extra_util'])}  "
+                f"{cl['extra_util']:3d}% used  · {cl['extra_used_cr']}/{cl['extra_limit_cr']} cr"
             )
         sections.append("Claude\n" + sep + "\n" + "\n".join(rows))
 
     if cp is not None:
-        cp_label = f"{'FULL':<9}" if cp['remaining'] <= 0 else f"{cp['remaining']}/{cp['quota']} left"
-        rows = [
-            f"  Monthly  {_pbar(cp['pct_used'])}  {cp_label} · resets in {cp['reset']}",
-        ]
+        rows = [row("Monthly", cp['pct_used'], cp['elapsed'], cp['reset'])]
         sections.append("GitHub Copilot\n" + sep + "\n" + "\n".join(rows))
 
     return "\n" + ("\n\n").join(sections) + "\n" if sections else "No data\n"
