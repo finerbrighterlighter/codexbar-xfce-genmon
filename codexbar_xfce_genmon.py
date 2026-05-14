@@ -25,13 +25,40 @@ from pathlib import Path
 MODE = sys.argv[1]
 ACTION = sys.argv[2]
 
-# Which sources to show: "codex", "claude", or "both" (default)
-SOURCE = os.environ.get("CODEXBAR_XFCE_SOURCE", "both").lower()
-if SOURCE not in ("codex", "claude", "both"):
-    SOURCE = "both"
+# Which models to show — driven by CODEXBAR_XFCE_MODELS (comma-separated).
+# Empty = all configured sources (Copilot only if copilot.conf exists).
+_MODELS_ENV = os.environ.get("CODEXBAR_XFCE_MODELS", "").lower()
+_REQUESTED_MODELS: set[str] = (
+    {m.strip() for m in _MODELS_ENV.split(",") if m.strip()}
+    if _MODELS_ENV else set()
+)
 
-SHOW_CODEX = SOURCE in ("codex", "both")
-SHOW_CLAUDE = SOURCE in ("claude", "both")
+# Backwards-compat: CODEXBAR_XFCE_SOURCE still honoured if MODELS not set
+if not _REQUESTED_MODELS:
+    _source = os.environ.get("CODEXBAR_XFCE_SOURCE", "").lower()
+    if _source == "codex":
+        _REQUESTED_MODELS = {"codex"}
+    elif _source == "claude":
+        _REQUESTED_MODELS = {"claude"}
+
+# Copilot config path — needed to decide whether to auto-include Copilot
+COPILOT_CONF_DIR  = Path.home() / ".config" / "codexbar-xfce-genmon"
+COPILOT_CONF_FILE = COPILOT_CONF_DIR / "copilot.conf"
+COPILOT_CONF_EXISTS = COPILOT_CONF_FILE.exists()
+
+# Resolve which models are actually active
+if _REQUESTED_MODELS:
+    SHOW_CODEX   = "codex"   in _REQUESTED_MODELS
+    SHOW_CLAUDE  = "claude"  in _REQUESTED_MODELS
+    SHOW_COPILOT = "copilot" in _REQUESTED_MODELS
+    # Explicit --model=copilot with no conf → show error state, not silent skip
+    COPILOT_EXPLICIT = SHOW_COPILOT
+else:
+    # No explicit model flags → auto-include everything that is configured
+    SHOW_CODEX   = True
+    SHOW_CLAUDE  = True
+    SHOW_COPILOT = COPILOT_CONF_EXISTS
+    COPILOT_EXPLICIT = False
 
 # ---------------------------------------------------------------------------
 # Codex auth / API constants
@@ -53,6 +80,18 @@ CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_API_URL = "https://api.anthropic.com/api/oauth/usage"
 CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_BETA_HEADER = "oauth-2025-04-20"
+
+# ---------------------------------------------------------------------------
+# Copilot auth / API constants
+# ---------------------------------------------------------------------------
+
+COPILOT_DEFAULT_QUOTA = int(os.environ.get("CODEXBAR_XFCE_COPILOT_QUOTA", "300") or "300")
+GITHUB_API_BASE = "https://api.github.com"
+
+COPILOT_CACHE_DIR  = Path.home() / ".cache" / "codexbar-xfce-genmon"
+COPILOT_CACHE_FILE = COPILOT_CACHE_DIR / "copilot_usage.json"
+COPILOT_USER_CACHE = COPILOT_CACHE_DIR / "copilot_user.json"
+COPILOT_LOCK_FILE  = COPILOT_CACHE_DIR / ".copilot_fetch.lock"
 
 # ---------------------------------------------------------------------------
 # Shared cache / timing constants
@@ -86,13 +125,15 @@ def env_int(name: str, default: int) -> int:
 
 ROTATE_SECONDS = max(1, env_int("CODEXBAR_XFCE_ROTATE_SECONDS", 15))
 
-# Default rotation includes both sources when both are active
+# Default rotation includes all active sources
 _default_rotate: list[str] = []
 if SHOW_CODEX:
     _default_rotate += ["codex:remaining", "codex:weekly"]
 if SHOW_CLAUDE:
     _default_rotate += ["claude:5h", "claude:7d"]
-if SHOW_CODEX and SHOW_CLAUDE:
+if SHOW_COPILOT:
+    _default_rotate += ["copilot:usage"]
+if (SHOW_CODEX or SHOW_CLAUDE or SHOW_COPILOT):
     _default_rotate += ["combined"]
 elif SHOW_CODEX:
     _default_rotate += ["codex:combined", "codex:credits"]
@@ -130,6 +171,8 @@ ICON_MAP = {
     "claude:opus":     os.environ.get("CODEXBAR_XFCE_ICON_CLAUDE_OPUS",    "applications-science"),
     "claude:sonnet":   os.environ.get("CODEXBAR_XFCE_ICON_CLAUDE_SONNET",  "text-editor"),
     "claude:extra":    os.environ.get("CODEXBAR_XFCE_ICON_CLAUDE_EXTRA",   "wallet"),
+    # Copilot icons
+    "copilot:usage":   os.environ.get("CODEXBAR_XFCE_ICON_COPILOT",        "github"),
     # Cross-source
     "combined":        os.environ.get("CODEXBAR_XFCE_ICON_BOTH_COMBINED",  "view-dual"),
     "rotate":          os.environ.get("CODEXBAR_XFCE_ICON_ROTATE",         "view-refresh"),
@@ -214,7 +257,7 @@ def _popup_label(remaining: int, reset: str) -> str:
     return f"{remaining:3d}% left · resets in {reset}"
 
 
-def build_popup_body(cx: dict | None, cl: dict | None) -> str:
+def build_popup_body(cx: dict | None, cl: dict | None, cp: dict | None = None) -> str:
     """Build a structured plain-text popup body with progress bars."""
     sep = "─" * 44
     sections: list[str] = []
@@ -247,6 +290,12 @@ def build_popup_body(cx: dict | None, cl: dict | None) -> str:
                 f"· {cl['extra_used_cr']}/{cl['extra_limit_cr']} cr"
             )
         sections.append("Claude\n" + sep + "\n" + "\n".join(rows))
+
+    if cp is not None:
+        rows = [
+            f"  Monthly  {_pbar(cp['pct_used'])}  {_popup_label(cp['remaining'], cp['reset'])}",
+        ]
+        sections.append("GitHub Copilot\n" + sep + "\n" + "\n".join(rows))
 
     return "\n" + ("\n\n").join(sections) + "\n" if sections else "No data\n"
 
@@ -725,6 +774,218 @@ def fetch_claude_usage() -> tuple[dict, int]:
 
 
 # ===========================================================================
+# Copilot — config, fetch, parse
+# ===========================================================================
+
+
+def load_copilot_config() -> dict | None:
+    """Load ~/.config/codexbar-xfce-genmon/copilot.conf.
+
+    Returns a dict with GITHUB_TOKEN and COPILOT_QUOTA, or None if the file
+    does not exist. Env vars CODEXBAR_XFCE_COPILOT_TOKEN and
+    CODEXBAR_XFCE_COPILOT_QUOTA override file values.
+    """
+    token_env = os.environ.get("CODEXBAR_XFCE_COPILOT_TOKEN")
+    quota_env = os.environ.get("CODEXBAR_XFCE_COPILOT_QUOTA")
+
+    cfg: dict = {"GITHUB_TOKEN": token_env, "COPILOT_QUOTA": COPILOT_DEFAULT_QUOTA}
+
+    if COPILOT_CONF_FILE.exists():
+        for raw in COPILOT_CONF_FILE.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                k, _, v = line.partition("=")
+                k, v = k.strip(), v.strip()
+                if k == "GITHUB_TOKEN" and not token_env:
+                    cfg["GITHUB_TOKEN"] = v
+                elif k == "COPILOT_QUOTA" and not quota_env:
+                    try:
+                        cfg["COPILOT_QUOTA"] = int(v)
+                    except ValueError:
+                        pass
+    elif not token_env:
+        return None  # no config and no env token — Copilot unavailable
+
+    if not cfg["GITHUB_TOKEN"]:
+        return None
+
+    if quota_env:
+        try:
+            cfg["COPILOT_QUOTA"] = int(quota_env)
+        except ValueError:
+            pass
+
+    return cfg
+
+
+def _github_get(url: str, token: str) -> dict | list:
+    """Authenticated GET to GitHub API. Raises RuntimeError on failure."""
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "codexbar-xfce-genmon/copilot",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"GitHub API HTTP {e.code}: {e.read().decode()[:200]}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"GitHub API network error: {e.reason}") from e
+
+
+def _copilot_next_reset_unix() -> int:
+    """Return Unix timestamp for 00:00 UTC on the 1st of next month."""
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        reset = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        reset = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+    return int(reset.timestamp())
+
+
+def fetch_copilot_usage() -> tuple[dict, int]:
+    """Fetch Copilot premium request usage. Returns (raw_data, stale_seconds).
+
+    raw_data contains 'used', 'quota', and 'reset_at' (unix).
+    Raises RuntimeError if config is missing or API fails.
+    """
+    cfg = load_copilot_config()
+    if cfg is None:
+        if COPILOT_EXPLICIT:
+            raise RuntimeError(
+                f"copilot.conf not found: {COPILOT_CONF_FILE}\n"
+                "Create it with:\n"
+                f"  mkdir -p {COPILOT_CONF_DIR}\n"
+                f"  echo 'GITHUB_TOKEN=ghp_...' >> {COPILOT_CONF_FILE}\n"
+                f"  echo 'COPILOT_QUOTA=300'    >> {COPILOT_CONF_FILE}\n"
+                "Token: https://github.com/settings/personal-access-tokens\n"
+                "Required: User permissions → Plan → Read-only"
+            )
+        raise RuntimeError("Copilot not configured")
+
+    token = cfg["GITHUB_TOKEN"]
+    quota = cfg["COPILOT_QUOTA"]
+
+    # Serve from cache if fresh
+    stale = 0
+    cached = fresh_cache(COPILOT_CACHE_FILE)
+    if cached is not None:
+        return cached, 0
+
+    # Try stale cache while fetching
+    stale_result = stale_cache(COPILOT_CACHE_FILE)
+
+    COPILOT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(COPILOT_LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        if stale_result:
+            data, age = stale_result
+            return data, age
+        raise RuntimeError("Copilot fetch locked and no cache")
+
+    try:
+        # Get GitHub username (cached 1h)
+        user_cached = None
+        if COPILOT_USER_CACHE.exists():
+            try:
+                uc = json.loads(COPILOT_USER_CACHE.read_text())
+                if time.time() - uc.get("_ts", 0) < 3600:
+                    user_cached = uc.get("login")
+            except Exception:
+                pass
+
+        if not user_cached:
+            user_data = _github_get(f"{GITHUB_API_BASE}/user", token)
+            login = user_data.get("login") if isinstance(user_data, dict) else None
+            if not login:
+                raise RuntimeError("Could not determine GitHub username")
+            COPILOT_USER_CACHE.write_text(json.dumps({"login": login, "_ts": int(time.time())}))
+            user_cached = login
+
+        # Fetch usage
+        url = f"{GITHUB_API_BASE}/users/{user_cached}/settings/billing/premium_request/usage"
+        usage_data = _github_get(url, token)
+
+        if isinstance(usage_data, list):
+            items = usage_data
+        else:
+            items = usage_data.get("usageItems", [])
+
+        used = round(sum(item.get("grossQuantity", 0) for item in items))
+        result = {
+            "used":     used,
+            "quota":    quota,
+            "reset_at": _copilot_next_reset_unix(),
+        }
+        atomic_write_json(COPILOT_CACHE_FILE, result)
+        return result, 0
+
+    except Exception:
+        if stale_result:
+            data, age = stale_result
+            return data, age
+        raise
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
+def parse_copilot(raw: dict) -> dict:
+    """Normalise raw Copilot cache data into display fields."""
+    used     = int(raw.get("used", 0))
+    quota    = int(raw.get("quota", COPILOT_DEFAULT_QUOTA)) or COPILOT_DEFAULT_QUOTA
+    reset_at = int(raw.get("reset_at", 0))
+
+    remaining  = max(0, quota - used)
+    pct_used   = min(100, round(used / quota * 100))
+    pct_remaining = max(0, 100 - pct_used)
+
+    # Reset is always 1st of next month — show in days
+    diff = max(0, reset_at - int(time.time()))
+    days = diff // 86400
+    reset_str = f"{days}d" if days > 0 else countdown(reset_at)
+
+    return {
+        "used":          used,
+        "remaining":     remaining,
+        "quota":         quota,
+        "pct_used":      pct_used,
+        "pct_remaining": pct_remaining,
+        "reset":         reset_str,
+        "reset_at":      reset_at,
+        "max_used":      pct_used,
+    }
+
+
+# ===========================================================================
+# Copilot — format
+# ===========================================================================
+
+
+def copilot_text_for_mode(mode: str, f: dict) -> str:
+    if mode == "copilot:usage":
+        return f"[CP] {f['used']}/{f['quota']} · {f['reset']}"
+    raise ValueError(f"unknown copilot mode '{mode}'")
+
+
+def copilot_tooltip_lines(f: dict, color: str) -> list[str]:
+    return [
+        tooltip_line("Monthly",   f"{f['remaining']} remaining ({f['used']} used of {f['quota']})", color),
+        tooltip_line("Used",      f"{f['pct_used']}%", color),
+        tooltip_line("Reset",     f['reset'], color),
+    ]
+
+
+# ===========================================================================
 # Codex — parse & format
 # ===========================================================================
 
@@ -936,7 +1197,7 @@ def claude_tooltip_lines(f: dict, color: str) -> list[str]:
 # ===========================================================================
 
 
-def combined_text(cx: dict | None, cl: dict | None) -> str:
+def combined_text(cx: dict | None, cl: dict | None, cp: dict | None = None) -> str:
     parts = []
     resets: list[int] = []
     if cx is not None:
@@ -947,6 +1208,10 @@ def combined_text(cx: dict | None, cl: dict | None) -> str:
         parts.append(f"CL {cl['fh_remaining']}%")
         if cl.get("fh_reset_at"):
             resets.append(cl["fh_reset_at"])
+    if cp is not None:
+        parts.append(f"CP {cp['remaining']}/{cp['quota']}")
+        if cp.get("reset_at"):
+            resets.append(cp["reset_at"])
     if not parts:
         return "N/A"
     text = " · ".join(parts)
@@ -967,6 +1232,8 @@ def format_message(
     codex_stale: int,
     claude_usage: dict | None,
     claude_stale: int,
+    copilot_usage: dict | None = None,
+    copilot_stale: int = 0,
 ) -> tuple[str, str, str, str, str, str]:
     """
     Return (text, tooltip, icon, color, resolved_mode_for_click, title).
@@ -976,11 +1243,13 @@ def format_message(
 
     cx = parse_codex(codex_usage) if codex_usage else None
     cl = parse_claude(claude_usage) if claude_usage else None
+    cp = parse_copilot(copilot_usage) if copilot_usage else None
 
     # Determine worst-case status colour across all active sources
     max_used = max(
         (cx["max_used"] if cx else 0),
         (cl["max_used"] if cl else 0),
+        (cp["max_used"] if cp else 0),
     )
     status_class = status_class_for_pct(max_used)
     color = COLOR_MAP[status_class]
@@ -988,11 +1257,12 @@ def format_message(
     # ------------------------------------------------------------------
     # Panel text
     # ------------------------------------------------------------------
-    is_codex_mode  = resolved_mode.startswith("codex:")
-    is_claude_mode = resolved_mode.startswith("claude:")
+    is_codex_mode   = resolved_mode.startswith("codex:")
+    is_claude_mode  = resolved_mode.startswith("claude:")
+    is_copilot_mode = resolved_mode.startswith("copilot:")
 
     if resolved_mode == "combined":
-        text = combined_text(cx, cl)
+        text = combined_text(cx, cl, cp)
     elif is_codex_mode:
         if cx is None:
             text = "[CX] N/A"
@@ -1003,6 +1273,11 @@ def format_message(
             text = "[CL] N/A"
         else:
             text = claude_text_for_mode(resolved_mode, cl)
+    elif is_copilot_mode:
+        if cp is None:
+            text = "[CP] N/A"
+        else:
+            text = copilot_text_for_mode(resolved_mode, cp)
     else:
         # Legacy bare modes (e.g. someone still passes "remaining") — map to codex
         legacy_map = {
@@ -1022,8 +1297,11 @@ def format_message(
             text = "N/A"
 
     # Stale indicator
-    any_stale = (codex_stale > 0 and is_codex_mode) or (claude_stale > 0 and is_claude_mode) or (
-        resolved_mode == "combined" and (codex_stale > 0 or claude_stale > 0)
+    any_stale = (
+        (codex_stale > 0 and is_codex_mode)
+        or (claude_stale > 0 and is_claude_mode)
+        or (copilot_stale > 0 and is_copilot_mode)
+        or (resolved_mode == "combined" and (codex_stale > 0 or claude_stale > 0 or copilot_stale > 0))
     )
     if any_stale:
         text = text + " ~"
@@ -1051,6 +1329,15 @@ def format_message(
         if claude_stale > 0:
             tooltip_parts.append(tooltip_line("Claude Data Age", f"{format_age(claude_stale)} (stale)", COLOR_MAP["high"]))
 
+    if cp is not None:
+        cp_color = COLOR_MAP[status_class_for_pct(cp["max_used"])]
+        if tooltip_parts:
+            tooltip_parts.append("")   # blank separator line
+        tooltip_parts.append(tooltip_header("GitHub Copilot"))
+        tooltip_parts += copilot_tooltip_lines(cp, cp_color)
+        if copilot_stale > 0:
+            tooltip_parts.append(tooltip_line("Copilot Data Age", f"{format_age(copilot_stale)} (stale)", COLOR_MAP["high"]))
+
     tooltip_parts.append(tooltip_line("Mode", resolved_mode, color))
     if MODE == "rotate":
         tooltip_parts.append(tooltip_line("Rotate Every", f"{ROTATE_SECONDS}s", color))
@@ -1060,6 +1347,8 @@ def format_message(
         title_parts.append(codex_plan)
     if cl is not None:
         title_parts.append("Claude")
+    if cp is not None:
+        title_parts.append("Copilot")
     title = " + ".join(title_parts) if title_parts else "Usage"
 
     return text, "\n".join(tooltip_parts), icon, color, resolved_mode, title
@@ -1078,6 +1367,10 @@ claude_usage_data: dict | None = None
 claude_stale: int = 0
 claude_error: str | None = None
 
+copilot_usage_data: dict | None = None
+copilot_stale: int = 0
+copilot_error: str | None = None
+
 if SHOW_CODEX:
     try:
         codex_usage_data, codex_plan, codex_stale = fetch_codex_usage()
@@ -1090,10 +1383,24 @@ if SHOW_CLAUDE:
     except Exception as exc:
         claude_error = str(exc)
 
+if SHOW_COPILOT:
+    try:
+        copilot_usage_data, copilot_stale = fetch_copilot_usage()
+    except Exception as exc:
+        copilot_error = str(exc)
+elif COPILOT_EXPLICIT:
+    # --model=copilot was explicitly requested but conf file is missing
+    copilot_error = (
+        "copilot.conf not found. Create ~/.config/codexbar-xfce-genmon/copilot.conf "
+        "with GITHUB_TOKEN=<token> to enable Copilot support."
+    )
+    print(copilot_error, file=sys.stderr)
+
 try:
     text, tooltip, icon, color, resolved_mode_for_click, title = format_message(
         codex_usage_data, codex_plan, codex_stale,
         claude_usage_data, claude_stale,
+        copilot_usage_data, copilot_stale,
     )
     # Append any per-source errors to the tooltip
     if codex_error:
@@ -1104,6 +1411,13 @@ try:
         tooltip += f"\n{tooltip_line('Claude Error', claude_error, COLOR_MAP['critical'])}"
         if claude_usage_data is None:
             text = text.replace("[CL]", "[CL!]") if "[CL]" in text else text
+    if copilot_error:
+        tooltip += f"\n{tooltip_line('Copilot Error', copilot_error, COLOR_MAP['critical'])}"
+        if copilot_usage_data is None:
+            if "[CP]" in text:
+                text = text.replace("[CP]", "[CP!]")
+            elif COPILOT_EXPLICIT and "[CP]" not in text:
+                text = "[CP!] " + text if text != "N/A" else "[CP!]"
     icon_click, text_click = default_clicks(resolved_mode_for_click)
 except Exception as exc:
     color = COLOR_MAP["critical"]
@@ -1117,7 +1431,8 @@ except Exception as exc:
 if ACTION == "popup":
     _cx = parse_codex(codex_usage_data) if codex_usage_data else None
     _cl = parse_claude(claude_usage_data) if claude_usage_data else None
-    print(build_popup_body(_cx, _cl))
+    _cp = parse_copilot(copilot_usage_data) if copilot_usage_data else None
+    print(build_popup_body(_cx, _cl, _cp))
     raise SystemExit(0)
 
 if SHOW_ICON:
