@@ -1,0 +1,5 @@
+# OpenRouter API key
+# Create one at: https://openrouter.ai/settings/keys
+# A regular key works; /credits may return 403 for restricted keys
+# (balance then shows as unavailable, key spend/limits still display).
+OPENROUTER_API_KEY=<your-openrouter-api-key>

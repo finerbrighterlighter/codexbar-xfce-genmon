@@ -1,4 +1,15 @@
+# Local config with secrets (ship only *.conf.example)
 copilot.conf
+openrouter.conf
+*.conf
+!*.conf.example
+.env*
+
+# Python
 __pycache__/
 *.pyc
-.gitingore
+
+# Internal planning docs (kept local)
+docs/plan-*.md
+tests/
+docs/

@@ -17,7 +17,7 @@ for arg in "$@"; do
     --popup)
       ACTION="popup"
       ;;
-    --model=codex|--model=claude|--model=copilot)
+    --model=codex|--model=claude|--model=copilot|--model=openrouter)
       MODELS+=("${arg#--model=}")
       ;;
     # Backwards-compatible aliases
