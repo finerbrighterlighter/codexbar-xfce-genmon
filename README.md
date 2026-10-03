@@ -4,7 +4,7 @@ XFCE Generic Monitor (genmon) plugin script that shows AI usage limits in the pa
 
 ## Features
 
-- **Sources:** OpenAI Codex, Anthropic Claude, GitHub Copilot (premium requests) and OpenRouter (credits). Each one is optional and they can be shown in any combination.
+- **Sources:** OpenAI Codex, Anthropic Claude, GitHub Copilot (AI credits) and OpenRouter (credits). Each one is optional and they can be shown in any combination.
 - **Per-window bars:** each rate-limit window has a bar with a `│` cursor at the elapsed-time position, plus `used · elapsed · resets` text.
 - **Pace / ETA:** each window shows `↑` / `→` / `↓` (burning faster than, on, or slower than an even pace) and either `lasts` or `empty in 2h 30m`.
 - **Claude scoped limits:** Claude data comes from the `limits[]` array, so model-scoped weekly caps (e.g. `Fable (7d)`) get their own row, count toward the panel color, and add `⚠Fable` to the panel text at 90% or more.
@@ -58,8 +58,9 @@ Refreshed tokens are written to the claude-usage-bar path. Claude Code's own fil
 2. Create the config:
    ```bash
    cp copilot.conf.example copilot.conf && chmod 600 copilot.conf
-   # set GITHUB_TOKEN=... and COPILOT_QUOTA=300 (Pro) or 1500 (Pro+)
+   # set GITHUB_TOKEN=... and COPILOT_QUOTA to your included AI credits (default 1500)
    ```
+   Usage comes from the billing summary (`copilot_ai_unit` / AI credits). Accounts still on the old premium-request billing fall back to that endpoint automatically.
 3. Check: `./codexbar-xfce-genmon --popup --model=copilot`
 
 ### OpenRouter
@@ -90,7 +91,7 @@ codexbar-xfce-genmon --popup                 # print the popup summary and exit
 
 | Mode | Panel text |
 |---|---|
-| `combined` | `CL ▂▆█  CX ▂  CP ▂  OR $1.4` (gauge, default) / `CX 88% · CL 96% ⚠Fable · CP 279/300 · OR $7.86 · 4h 35m` (`CODEXBAR_XFCE_PANEL_STYLE=text`) |
+| `combined` | `CL ▂▆█  CX ▂  CP ▂  OR $1.4` (gauge, default) / `CX 88% · CL 96% ⚠Fable · CP 1279/1500 · OR $7.86 · 4h 35m` (`CODEXBAR_XFCE_PANEL_STYLE=text`) |
 | `codex:remaining` / `codex:used` | `[CX] 58% left · 2h 14m` / `[CX] 42% used · 2h 14m` |
 | `codex:weekly` / `codex:combined` / `codex:credits` | `[CX] W 83% left · 4d 6h` / `[CX] S 58% · W 83%` / `[CX] L 120-180 · C 40-60` |
 | `claude:5h` / `claude:7d` | `[CL] 96% left · 4h 35m` / `[CL] W 23% left · 13h 25m` |
@@ -181,7 +182,7 @@ How to read a row: the bar fills to **used**, and `│` marks **elapsed** time i
 | `CODEXBAR_XFCE_ICON_CLICK` / `CODEXBAR_XFCE_TEXT_CLICK` | popup command | Command to run on icon / text click |
 | `CODEXBAR_XFCE_COLOR_LOW` / `_MID` / `_HIGH` / `_CRITICAL` | `#98c379` / `#e5c07b` / `#d19a66` / `#e06c75` | Status colors |
 | `CODEXBAR_XFCE_COPILOT_TOKEN` | from `copilot.conf` | Overrides the GitHub token |
-| `CODEXBAR_XFCE_COPILOT_QUOTA` | `300` | Overrides the monthly premium-request quota |
+| `CODEXBAR_XFCE_COPILOT_QUOTA` | `1500` | Overrides the monthly included AI-credit quota |
 | `CODEXBAR_XFCE_OPENROUTER_MIN_BALANCE` | `2` | USD balance below which `OR` turns orange and is always shown in the gauge. **Setting it explicitly** also enables a once-a-day low-balance alert |
 | `CODEXBAR_XFCE_ALERT_THRESHOLDS` | `80,90,100` | Alert thresholds in %; an empty string disables alerts |
 | `CODEXBAR_XFCE_ICON_<MODE>` | theme icon names | Per-mode icon. `<MODE>` is one of `REMAINING`, `USED`, `WEEKLY`, `COMBINED`, `CREDITS`, `CLAUDE_5H`, `CLAUDE_7D`, `CLAUDE_OPUS`, `CLAUDE_SONNET`, `CLAUDE_EXTRA`, `COPILOT`, `OPENROUTER`, `BOTH_COMBINED`, `ROTATE` |

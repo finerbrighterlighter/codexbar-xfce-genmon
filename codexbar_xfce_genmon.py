@@ -98,7 +98,7 @@ CLAUDE_BETA_HEADER = "oauth-2025-04-20"
 # Copilot auth / API constants
 # ---------------------------------------------------------------------------
 
-COPILOT_DEFAULT_QUOTA = int(os.environ.get("CODEXBAR_XFCE_COPILOT_QUOTA", "300") or "300")
+COPILOT_DEFAULT_QUOTA = int(os.environ.get("CODEXBAR_XFCE_COPILOT_QUOTA", "1500") or "1500")
 GITHUB_API_BASE = "https://api.github.com"
 
 COPILOT_CACHE_DIR  = Path.home() / ".cache" / "codexbar-xfce-genmon"
@@ -1226,8 +1226,19 @@ def _copilot_next_reset_unix() -> int:
     return int(reset.timestamp())
 
 
+def copilot_credits_used(summary: dict | list) -> int | None:
+    """Sum Copilot AI credits from a billing usage summary; None if no AI-credit items."""
+    items = summary.get("usageItems", []) if isinstance(summary, dict) else []
+    credits = [i for i in items
+               if "ai_unit" in str(i.get("sku", "")).lower()
+               or str(i.get("unitType", "")).lower() in ("ai-units", "aicredits")]
+    if not credits:
+        return None
+    return round(sum(float(i.get("grossQuantity") or 0) for i in credits))
+
+
 def fetch_copilot_usage() -> tuple[dict, int]:
-    """Fetch Copilot premium request usage. Returns (raw_data, stale_seconds).
+    """Fetch Copilot AI-credit usage (legacy premium requests as fallback). Returns (raw_data, stale_seconds).
 
     raw_data contains 'used', 'quota', and 'reset_at' (unix).
     Raises RuntimeError if config is missing or API fails.
@@ -1240,7 +1251,7 @@ def fetch_copilot_usage() -> tuple[dict, int]:
                 "Create it with:\n"
                 f"  mkdir -p {COPILOT_CONF_DIR}\n"
                 f"  echo 'GITHUB_TOKEN=ghp_...' >> {COPILOT_CONF_FILE}\n"
-                f"  echo 'COPILOT_QUOTA=300'    >> {COPILOT_CONF_FILE}\n"
+                f"  echo 'COPILOT_QUOTA=1500'   >> {COPILOT_CONF_FILE}\n"
                 "Token: https://github.com/settings/personal-access-tokens\n"
                 "Required: User permissions → Plan → Read-only"
             )
@@ -1291,16 +1302,16 @@ def fetch_copilot_usage() -> tuple[dict, int]:
             COPILOT_USER_CACHE.write_text(json.dumps({"login": login, "_ts": int(time.time())}))
             user_cached = login
 
-        # Fetch usage
-        url = f"{GITHUB_API_BASE}/users/{user_cached}/settings/billing/premium_request/usage"
-        usage_data = _github_get(url, token)
-
-        if isinstance(usage_data, list):
-            items = usage_data
-        else:
-            items = usage_data.get("usageItems", [])
-
-        used = round(sum(item.get("grossQuantity", 0) for item in items))
+        # Fetch usage: AI credits (current billing) first, legacy premium requests as fallback
+        now = datetime.now(timezone.utc)
+        billing = f"{GITHUB_API_BASE}/users/{user_cached}/settings/billing"
+        summary = _github_get(
+            f"{billing}/usage/summary?year={now.year}&month={now.month}&product=copilot", token)
+        used = copilot_credits_used(summary)
+        if used is None:
+            usage_data = _github_get(f"{billing}/premium_request/usage", token)
+            items = usage_data if isinstance(usage_data, list) else usage_data.get("usageItems", [])
+            used = round(sum(item.get("grossQuantity", 0) for item in items))
         result = {
             "used":     used,
             "quota":    quota,
