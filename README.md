@@ -58,9 +58,9 @@ Refreshed tokens are written to the claude-usage-bar path. Claude Code's own fil
 2. Create the config:
    ```bash
    cp copilot.conf.example copilot.conf && chmod 600 copilot.conf
-   # set GITHUB_TOKEN=... and COPILOT_QUOTA to your included AI credits (default 1500)
+   # set GITHUB_TOKEN=...
    ```
-   Usage comes from the billing summary (`copilot_ai_unit` / AI credits). Accounts still on the old premium-request billing fall back to that endpoint automatically.
+   Usage, quota and reset date come from `copilot_internal/user` (the endpoint Copilot clients use to check your quota; undocumented), so the numbers match what Copilot enforces. If that endpoint fails, the billing usage summary (AI credits, then legacy premium requests) is used with `COPILOT_QUOTA` as the quota.
 3. Check: `./codexbar-xfce-genmon --popup --model=copilot`
 
 ### OpenRouter
@@ -182,7 +182,7 @@ How to read a row: the bar fills to **used**, and `│` marks **elapsed** time i
 | `CODEXBAR_XFCE_ICON_CLICK` / `CODEXBAR_XFCE_TEXT_CLICK` | popup command | Command to run on icon / text click |
 | `CODEXBAR_XFCE_COLOR_LOW` / `_MID` / `_HIGH` / `_CRITICAL` | `#98c379` / `#e5c07b` / `#d19a66` / `#e06c75` | Status colors |
 | `CODEXBAR_XFCE_COPILOT_TOKEN` | from `copilot.conf` | Overrides the GitHub token |
-| `CODEXBAR_XFCE_COPILOT_QUOTA` | `1500` | Overrides the monthly included AI-credit quota |
+| `CODEXBAR_XFCE_COPILOT_QUOTA` | `1500` | Fallback quota, used only when Copilot's own quota endpoint is unavailable |
 | `CODEXBAR_XFCE_OPENROUTER_MIN_BALANCE` | `2` | USD balance below which `OR` turns orange and is always shown in the gauge. **Setting it explicitly** also enables a once-a-day low-balance alert |
 | `CODEXBAR_XFCE_ALERT_THRESHOLDS` | `80,90,100` | Alert thresholds in %; an empty string disables alerts |
 | `CODEXBAR_XFCE_ICON_<MODE>` | theme icon names | Per-mode icon. `<MODE>` is one of `REMAINING`, `USED`, `WEEKLY`, `COMBINED`, `CREDITS`, `CLAUDE_5H`, `CLAUDE_7D`, `CLAUDE_OPUS`, `CLAUDE_SONNET`, `CLAUDE_EXTRA`, `COPILOT`, `OPENROUTER`, `BOTH_COMBINED`, `ROTATE` |

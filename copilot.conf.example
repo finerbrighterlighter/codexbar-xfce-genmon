@@ -3,6 +3,6 @@
 # Required permission: User permissions → Plan → Read-only
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
-# Your monthly included AI credits (github.com/settings/billing shows "x / N AI credits").
-# Default: 1500
+# Fallback only: the real quota is read from Copilot automatically.
+# Used if that fails (github.com/settings/billing shows "x / N AI credits"). Default: 1500
 COPILOT_QUOTA=1500

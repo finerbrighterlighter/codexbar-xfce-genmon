@@ -1226,6 +1226,40 @@ def _copilot_next_reset_unix() -> int:
     return int(reset.timestamp())
 
 
+def _copilot_internal_get(token: str) -> dict:
+    """GET copilot_internal/user (undocumented; what Copilot clients use for quota)."""
+    req = urllib.request.Request(
+        f"{GITHUB_API_BASE}/copilot_internal/user",
+        headers={
+            "Authorization": f"token {token}",
+            "Accept": "application/json",
+            "User-Agent": "codexbar-xfce-genmon/copilot",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode())
+
+
+def copilot_quota_snapshot(data: dict) -> dict | None:
+    """Extract {used, quota, reset_at} from copilot_internal/user; None if no metered quota."""
+    if not isinstance(data, dict):
+        return None
+    snap = (data.get("quota_snapshots") or {}).get("premium_interactions") or {}
+    entitlement = snap.get("entitlement")
+    if snap.get("unlimited") or not entitlement:
+        return None
+    try:
+        quota = int(entitlement)
+        if snap.get("credits_used") is not None:
+            used = round(float(snap["credits_used"]))
+        else:
+            used = round(quota - float(snap.get("quota_remaining", quota)))
+    except (TypeError, ValueError):
+        return None
+    reset_at = iso8601_to_unix(data.get("quota_reset_date_utc")) or _copilot_next_reset_unix()
+    return {"used": max(0, used), "quota": quota, "reset_at": reset_at}
+
+
 def copilot_credits_used(summary: dict | list) -> int | None:
     """Sum Copilot AI credits from a billing usage summary; None if no AI-credit items."""
     items = summary.get("usageItems", []) if isinstance(summary, dict) else []
@@ -1284,7 +1318,17 @@ def fetch_copilot_usage() -> tuple[dict, int]:
         raise RuntimeError("Copilot fetch locked and no cache")
 
     try:
-        # Get GitHub username (cached 1h)
+        # Primary: Copilot's own entitlement endpoint (used, quota and reset date)
+        try:
+            snap = copilot_quota_snapshot(_copilot_internal_get(token))
+        except Exception:
+            snap = None
+        if snap is not None:
+            atomic_write_json(COPILOT_CACHE_FILE, snap)
+            clear_backoff("copilot")
+            return snap, 0
+
+        # Fallback: billing API (needs username, cached 1h)
         user_cached = None
         if COPILOT_USER_CACHE.exists():
             try:
