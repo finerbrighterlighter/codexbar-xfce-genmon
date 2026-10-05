@@ -40,7 +40,7 @@ Codex and Claude are always tried. Copilot and OpenRouter are enabled automatica
 
 ### Codex
 
-Run `codex login`. Credentials are read from `~/.codex/auth.json` and refreshed automatically.
+Run `codex login`. Credentials are read from `~/.codex/auth.json`, read-only. An expired token is never refreshed here (that would rotate the refresh token the codex CLI holds); the last cached data is shown until the next `codex` run refreshes it.
 
 ### Claude
 
@@ -50,7 +50,7 @@ Credentials are read from the first of these that exists:
 2. `~/.config/claude-usage-bar/credentials.json`: written by the claude-usage-bar app.
 3. `~/.config/claude-usage-bar/token`: legacy plain access token.
 
-Refreshed tokens are written to the claude-usage-bar path. Claude Code's own file is never modified.
+Credentials are read-only. An expired token is never refreshed here (that would rotate the refresh token Claude Code holds); the last cached data is shown until the next `claude` run refreshes it.
 
 ### GitHub Copilot
 
@@ -100,7 +100,7 @@ codexbar-xfce-genmon --popup                 # print the popup summary and exit
 | `openrouter:balance` | `[OR] $7.86` |
 | `rotate` | cycles through the modes in `CODEXBAR_XFCE_ROTATE_MODES` |
 
-In `combined` (gauge style), each source is a label followed by one block glyph per window showing the **used** percentage, from `▁` (0%) to `█` (100%); any use shows at least `▂`. `CL` shows 5-hour, 7-day, then each scoped limit (e.g. Fable); `CX` each window the plan has (Go has only the 30-day one); `CP` the monthly quota; `OR` the balance (`$7.9`, whole dollars from $10). Each glyph is colored by its own percentage and each label by its worst window. Idle sources are hidden, where idle means no recent **activity**: a source is shown only if any window's used value (or OpenRouter's total usage) rose within the last `CODEXBAR_XFCE_ACTIVE_HOURS` (default 6), or any window is at least `CODEXBAR_XFCE_SHOW_AT_PCT`% used (default 80). OpenRouter is also shown while today's spend (`usage_daily`) is above zero or the balance is below `CODEXBAR_XFCE_OPENROUTER_MIN_BALANCE`. Activity is tracked in `~/.cache/codexbar-xfce-genmon/activity.json` by comparing each panel run's fresh data with the last one; drops (window resets) and stale or backed-off data don't count, and a source seen for the first time starts out idle. If all are hidden the panel shows `AI ✓`. A failed source shows as `CL!` in red and is never hidden. Reset times are in the tooltip, whose first line is a legend of the glyphs shown plus the hidden sources, e.g. `bars = % used · CL 5h 7d Fable · hidden: CX CP OR (idle >6h)`.
+In `combined` (gauge style), each source is a label followed by one block glyph per window showing the **used** percentage, from `▁` (0%) to `█` (100%); any use shows at least `▂`. `CL` shows 5-hour, 7-day, then each scoped limit (e.g. Fable); `CX` each window the plan has (Go has only the 30-day one); `CP` the monthly quota; `OR` the balance (`$7.9`, whole dollars from $10; `$7.9 · 9d` once the month-average runway drops under 30 days). Each glyph is colored by its own percentage and each label by its worst window. Idle sources are hidden, where idle means no recent **activity**: a source is shown only if any window's used value (or OpenRouter's total usage) rose within the last `CODEXBAR_XFCE_ACTIVE_HOURS` (default 6), or any window is at least `CODEXBAR_XFCE_SHOW_AT_PCT`% used (default 80). OpenRouter is also shown while today's spend (`usage_daily`) is above zero or the balance is below `CODEXBAR_XFCE_OPENROUTER_MIN_BALANCE`. Activity is tracked in `~/.cache/codexbar-xfce-genmon/activity.json` by comparing each panel run's fresh data with the last one; drops (window resets) and stale or backed-off data don't count, and a source seen for the first time starts out idle. If all are hidden the panel shows `AI ✓`. A failed source shows as `CL!` in red and is never hidden. Reset times are in the tooltip, whose first line is a legend of the glyphs shown plus the hidden sources, e.g. `bars = % used · CL 5h 7d Fable · hidden: CX CP OR (idle >6h)`.
 
 In `combined` with `CODEXBAR_XFCE_PANEL_STYLE=text`, `CX`/`CL` show the remaining percentage of the first window, `CP` shows remaining/quota, `OR` shows the balance, and the time at the end is the nearest reset. A trailing `~` means some data is stale. `[CX!]` / `[CL!]` / `[CP!]` / `[OR!]` (or a trailing `OR!` in text-style `combined`) means that source failed to load. `W n/a` in `codex:weekly` / `codex:combined` means the Codex plan has no weekly window (e.g. Go).
 
@@ -129,13 +129,14 @@ GitHub Copilot
 Monthly      │░░░░░░░░░    7% used ·   8% elapsed · resets 28d · → lasts
 
 OpenRouter
-Balance      ██░░░░░░░░  $7.86 left · $2.14/$10.00 used
+Balance      $7.77 left · ~321 days at $0.02/day (month avg)
+Bought       spent $17.23 of $25.00 bought
 Spend        today $0.00 · week $0.20 · month $0.02
 Free reqs    0/1000 today
 Mode         combined
 ```
 
-Some rows appear only when the API returns data for them: `Key limit` (OpenRouter), `Review` (Codex code review), and `Opus (7d)` / `Sonnet (7d)` / `Extra` (Claude). When data is served from cache because of an error or backoff, a `… Data Age` row says how old it is and when the next retry is.
+Some rows appear only when the API returns data for them: `Key cap` (OpenRouter, the only OpenRouter row with a bar), `Review` (Codex code review), and `Opus (7d)` / `Sonnet (7d)` / `Extra` (Claude). When data is served from cache because of an error or backoff, a `… Data Age` row says how old it is and when the next retry is.
 
 ### Popup
 
@@ -159,7 +160,8 @@ GitHub Copilot
 
 OpenRouter
 ────────────────────────────────────────────────────────
-  Balance     ████░░░░░░░░░░░░░░░░  $7.86 left · $2.14/$10.00 used
+  Balance     $7.77 left · ~321 days at $0.02/day (month avg)
+  Bought      spent $17.23 of $25.00 bought
   Spend       today $0.00 · week $0.20 · month $0.02
   Free reqs   0/1000 today
 ```
@@ -193,7 +195,7 @@ All state lives in `~/.cache/codexbar-xfce-genmon/`:
 
 | File | Contents |
 |---|---|
-| `usage.json`, `claude_usage.json`, `copilot_usage.json`, `openrouter_usage.json` | Last API responses: fresh for 60 s, then served as stale for up to 7 days |
+| `usage.json`, `claude_usage.json`, `copilot_usage.json`, `openrouter_usage.json` | Last API responses: fresh for 5 min (`CACHE_TTL`, keeps Claude's oauth/usage clear of 429s), then served as stale for up to 7 days |
 | `<provider>_backoff.json` | `{blocked_until, reason, interval}` while a provider is backing off |
 | `alerts.json` | Highest alert threshold already sent for each `provider:window:reset` |
 

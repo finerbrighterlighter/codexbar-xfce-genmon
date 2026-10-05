@@ -78,9 +78,7 @@ else:
 # ---------------------------------------------------------------------------
 
 CODEX_CREDS_PATH = Path.home() / ".codex" / "auth.json"
-CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CODEX_API_URL = "https://chatgpt.com/backend-api/wham/usage"
-CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 # ---------------------------------------------------------------------------
 # Claude auth / API constants
@@ -89,9 +87,7 @@ CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CLAUDE_CREDS_DIR = Path.home() / ".config" / "claude-usage-bar"
 CLAUDE_CREDS_FILE = CLAUDE_CREDS_DIR / "credentials.json"
 CLAUDE_TOKEN_FILE = CLAUDE_CREDS_DIR / "token"          # legacy plain-text fallback
-CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_API_URL = "https://api.anthropic.com/api/oauth/usage"
-CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_BETA_HEADER = "oauth-2025-04-20"
 
 # ---------------------------------------------------------------------------
@@ -132,8 +128,8 @@ OPENROUTER_ALERT_BALANCE = env_float("CODEXBAR_XFCE_OPENROUTER_MIN_BALANCE", Non
 # Shared cache / timing constants
 # ---------------------------------------------------------------------------
 
-REFRESH_BUFFER = 300        # seconds before expiry to trigger refresh
-CACHE_TTL = 60              # seconds a fresh cache entry is valid
+EXPIRY_BUFFER = 60          # treat a token this close to expiry as expired
+CACHE_TTL = 300             # seconds a fresh cache entry is valid (5 min keeps oauth/usage clear of 429s)
 SESSION_WINDOW = 5 * 3600   # fallback if API doesn't supply window_seconds
 WEEKLY_WINDOW = 7 * 24 * 3600
 REVIEW_WINDOW = WEEKLY_WINDOW   # fallback for code-review window
@@ -848,29 +844,6 @@ def plan_from_id_token(id_token: str) -> str:
 # ===========================================================================
 
 
-def codex_refresh_tokens(creds: dict) -> dict:
-    tokens = creds.get("tokens", {})
-    refresh_token = tokens.get("refresh_token")
-    if not refresh_token:
-        raise RuntimeError("Missing Codex refresh token. Run: codex login")
-    payload = {
-        "client_id": CODEX_CLIENT_ID,
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-        "scope": "openid profile email",
-    }
-    refreshed = http_json(CODEX_TOKEN_URL, method="POST", body=payload, timeout=25)
-    new_tokens = creds.setdefault("tokens", {})
-    new_tokens["access_token"] = refreshed.get("access_token", new_tokens.get("access_token", ""))
-    if refreshed.get("refresh_token"):
-        new_tokens["refresh_token"] = refreshed["refresh_token"]
-    if refreshed.get("id_token"):
-        new_tokens["id_token"] = refreshed["id_token"]
-    creds["last_refresh"] = time.strftime("%Y-%m-%dT%H:%M:%S.000000000Z", time.gmtime())
-    atomic_write_json(CODEX_CREDS_PATH, creds)
-    return creds
-
-
 def fetch_codex_usage() -> tuple[dict, str, int]:
     """Return (usage_dict, plan_str, stale_age_seconds)."""
     if not CODEX_CREDS_PATH.exists():
@@ -905,20 +878,16 @@ def fetch_codex_usage() -> tuple[dict, str, int]:
         if not access_token:
             raise RuntimeError("No Codex access token. Run: codex login")
 
-        if jwt_exp(access_token) < int(time.time()) + REFRESH_BUFFER:
-            try:
-                creds = codex_refresh_tokens(creds)
-                tokens = creds.get("tokens", {})
-                access_token = tokens.get("access_token", access_token)
-            except Exception as exc:
-                record_backoff("codex", exc)
-                result = stale_cache(CODEX_CACHE_FILE)
-                if result:
-                    data, age = result
-                    return data, plan_from_id_token(tokens.get("id_token", "")), age
-                if is_transient_error(exc):
-                    raise RuntimeError("Codex usage is waiting for network.") from exc
-                raise RuntimeError(f"Codex token refresh failed: {exc}") from exc
+        # Read-only: refreshing would rotate the refresh token the codex CLI
+        # holds and race its writes to auth.json. An expired token waits for
+        # the next codex run to refresh it.
+        exp = jwt_exp(access_token)
+        if exp and exp < int(time.time()) + EXPIRY_BUFFER:
+            result = stale_cache(CODEX_CACHE_FILE)
+            if result:
+                data, age = result
+                return data, plan_from_id_token(tokens.get("id_token", "")), age
+            raise RuntimeError("Codex token expired. Run codex once to refresh it.")
 
         headers = {"Authorization": f"Bearer {access_token}"}
         account_id = tokens.get("account_id")
@@ -966,22 +935,13 @@ def _parse_claude_creds_dict(data: dict) -> dict:
         expires_unix = iso8601_to_unix(raw_expires) or None
     return {
         "access_token":  data.get("accessToken", ""),
-        "refresh_token": data.get("refreshToken"),
         "expires_unix":  expires_unix,   # always a Unix timestamp (seconds) or None
-        "scopes":        data.get("scopes", []),
     }
 
 
-# Credential source constants — used by save to know where to write back
-_CRED_SOURCE_CLAUDE_CODE = "claude_code"
-_CRED_SOURCE_USAGE_BAR   = "usage_bar"
-_CRED_SOURCE_LEGACY      = "legacy"
-
-
-def claude_load_credentials() -> tuple[dict, str]:
+def claude_load_credentials() -> dict:
     """Load Claude credentials.
 
-    Returns (creds_dict, source) where source is one of the _CRED_SOURCE_* constants.
     Priority: Claude Code > claude-usage-bar app > legacy token file.
     """
     # 1. Claude Code (~/.claude/.credentials.json) — claudeAiOauth key
@@ -991,7 +951,7 @@ def claude_load_credentials() -> tuple[dict, str]:
             data = read_json(claude_code_file)
             oauth = data.get("claudeAiOauth") or {}
             if oauth.get("accessToken"):
-                return _parse_claude_creds_dict(oauth), _CRED_SOURCE_CLAUDE_CODE
+                return _parse_claude_creds_dict(oauth)
         except Exception:
             pass
 
@@ -1000,7 +960,7 @@ def claude_load_credentials() -> tuple[dict, str]:
         try:
             data = read_json(CLAUDE_CREDS_FILE)
             if data.get("accessToken"):
-                return _parse_claude_creds_dict(data), _CRED_SOURCE_USAGE_BAR
+                return _parse_claude_creds_dict(data)
         except Exception:
             pass
 
@@ -1008,8 +968,7 @@ def claude_load_credentials() -> tuple[dict, str]:
     if CLAUDE_TOKEN_FILE.exists():
         token = CLAUDE_TOKEN_FILE.read_text().strip()
         if token:
-            creds = {"access_token": token, "refresh_token": None, "expires_unix": None, "scopes": []}
-            return creds, _CRED_SOURCE_LEGACY
+            return {"access_token": token, "expires_unix": None}
 
     raise RuntimeError(
         "No Claude credentials found. "
@@ -1017,83 +976,16 @@ def claude_load_credentials() -> tuple[dict, str]:
     )
 
 
-def claude_save_credentials(creds: dict, source: str) -> None:
-    """Persist refreshed credentials.
-
-    Never writes back to Claude Code's file — that is managed by the Claude CLI.
-    Always writes to the claude-usage-bar path so subsequent reads pick it up.
-    """
-    if source == _CRED_SOURCE_CLAUDE_CODE:
-        # Write a usage-bar-format file so the refreshed token survives
-        # without touching ~/.claude/.credentials.json
-        target_dir = CLAUDE_CREDS_DIR
-    else:
-        target_dir = CLAUDE_CREDS_DIR
-
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    # Store expiresAt as Unix ms int to be consistent with Claude Code format
-    expires_at_ms = None
-    if creds.get("expires_unix"):
-        expires_at_ms = creds["expires_unix"] * 1000
-
-    payload = {
-        "accessToken":  creds["access_token"],
-        "refreshToken": creds.get("refresh_token"),
-        "expiresAt":    expires_at_ms,
-        "scopes":       creds.get("scopes", []),
-    }
-    target = target_dir / "credentials.json"
-    with tempfile.NamedTemporaryFile("w", delete=False, dir=target_dir) as fh:
-        json.dump(payload, fh)
-        tmp = fh.name
-    os.replace(tmp, target)
-    os.chmod(target, 0o600)
-
-
-def claude_token_needs_refresh(creds: dict) -> bool:
+def claude_token_expired(creds: dict) -> bool:
     exp = creds.get("expires_unix")
     if not exp:
         return False    # no expiry info — assume still valid
-    return int(exp) < int(time.time()) + REFRESH_BUFFER
-
-
-def claude_refresh_tokens(creds: dict, source: str) -> dict:
-    refresh_token = creds.get("refresh_token")
-    if not refresh_token:
-        raise RuntimeError("No Claude refresh token. Re-authenticate via 'claude' or the claude-usage-bar app.")
-    scopes = creds.get("scopes") or ["user:profile", "user:inference"]
-    payload = {
-        "grant_type":    "refresh_token",
-        "refresh_token": refresh_token,
-        "client_id":     CLAUDE_CLIENT_ID,
-        "scope":         " ".join(scopes),
-    }
-    refreshed = http_json(CLAUDE_TOKEN_URL, method="POST", body=payload, timeout=25)
-    if "access_token" not in refreshed:
-        raise RuntimeError("Claude token refresh returned no access_token.")
-
-    expires_unix: int | None = None
-    expires_in = refreshed.get("expires_in")
-    if expires_in:
-        try:
-            expires_unix = int(time.time()) + int(expires_in)
-        except (TypeError, ValueError):
-            pass
-
-    new_creds = {
-        "access_token":  refreshed["access_token"],
-        "refresh_token": refreshed.get("refresh_token") or refresh_token,
-        "expires_unix":  expires_unix,
-        "scopes":        scopes,
-    }
-    claude_save_credentials(new_creds, source)
-    return new_creds
+    return int(exp) < int(time.time()) + EXPIRY_BUFFER
 
 
 def fetch_claude_usage() -> tuple[dict, int]:
     """Return (usage_dict, stale_age_seconds)."""
-    creds, source = claude_load_credentials()
+    creds = claude_load_credentials()
 
     cached = fresh_cache(CLAUDE_CACHE_FILE)
     if cached is not None:
@@ -1115,19 +1007,14 @@ def fetch_claude_usage() -> tuple[dict, int]:
         if backoff_blocked(state, time.time()):
             return serve_during_backoff(CLAUDE_CACHE_FILE, "Claude", state)
 
-        creds, source = claude_load_credentials()
-        if claude_token_needs_refresh(creds):
-            try:
-                creds = claude_refresh_tokens(creds, source)
-            except Exception as exc:
-                record_backoff("claude", exc)
-                result = stale_cache(CLAUDE_CACHE_FILE)
-                if result:
-                    data, age = result
-                    return data, age
-                if is_transient_error(exc):
-                    raise RuntimeError("Claude usage is waiting for network.") from exc
-                raise RuntimeError(f"Claude token refresh failed: {exc}") from exc
+        creds = claude_load_credentials()
+        # Read-only: refreshing would rotate the refresh token Claude Code
+        # holds. An expired token waits for the next claude run to refresh it.
+        if claude_token_expired(creds):
+            result = stale_cache(CLAUDE_CACHE_FILE)
+            if result:
+                return result
+            raise RuntimeError("Claude token expired. Run claude once to refresh it.")
 
         headers = {
             "Authorization":  f"Bearer {creds['access_token']}",
@@ -1569,6 +1456,20 @@ def balance_class(balance: float | None) -> str:
     return "low"
 
 
+def runway_class(runway_days: float | None) -> str:
+    if runway_days is None:
+        return "low"
+    if runway_days < 5:
+        return "critical"
+    if runway_days < 14:
+        return "high"
+    return "low"
+
+
+def money_text(amount: float) -> str:
+    return f"-${-amount:.2f}" if amount < 0 else f"${amount:.2f}"
+
+
 def parse_openrouter(raw: dict, now: float | None = None) -> dict:
     """Normalise cached OpenRouter data into display fields."""
     now = time.time() if now is None else now
@@ -1576,12 +1477,10 @@ def parse_openrouter(raw: dict, now: float | None = None) -> dict:
     credits = raw.get("credits")
 
     balance = total = spent = None
-    pct_used = 0
     if isinstance(credits, dict):
         total = _money(credits.get("total_credits")) or 0.0
         spent = _money(credits.get("total_usage")) or 0.0
         balance = total - spent
-        pct_used = clamp_pct(spent / total * 100) if total > 0 else (100 if spent > 0 else 0)
 
     free = key.get("free_model_daily_requests")
     free_used = free_limit = None
@@ -1596,15 +1495,24 @@ def parse_openrouter(raw: dict, now: float | None = None) -> dict:
         remaining = limit_remaining if limit_remaining is not None else limit
         limit_pct = clamp_pct((limit - remaining) / limit * 100) or 0
 
+    # month-to-date average burn (USD/day); the fractional day count has a 1-day floor
+    month_start = datetime.fromtimestamp(now, tz=timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    days_elapsed = max(1.0, (now - month_start.timestamp()) / 86400)
+    spend_month = _money(key.get("usage_monthly")) or 0.0
+    burn_per_day = max(0.0, spend_month / days_elapsed)
+    runway_days = balance / burn_per_day if balance is not None and balance > 0 and burn_per_day > 0 else None
+
     return {
         "balance":         balance,
         "balance_error":   raw.get("credits_error"),
         "total":           total,
         "spent":           spent,
-        "pct_used":        pct_used or 0,
+        "burn_per_day":    burn_per_day,
+        "burn_basis":      "month avg",
+        "runway_days":     runway_days,
         "spend_day":       _money(key.get("usage_daily")) or 0.0,
         "spend_week":      _money(key.get("usage_weekly")) or 0.0,
-        "spend_month":     _money(key.get("usage_monthly")) or 0.0,
+        "spend_month":     spend_month,
         "free_used":       free_used,
         "free_limit":      free_limit,
         "is_free_tier":    bool(key.get("is_free_tier")),
@@ -1614,13 +1522,13 @@ def parse_openrouter(raw: dict, now: float | None = None) -> dict:
         "limit_reset_at":  _next_utc_reset(limit_reset, now),
         "limit_pct":       limit_pct,
         "max_used":        limit_pct if limit else 0,
-        "status_class":    worst_class(balance_class(balance),
+        "status_class":    worst_class(balance_class(balance), runway_class(runway_days),
                                        status_class_for_pct(limit_pct) if limit else "low"),
     }
 
 
 def openrouter_balance_text(f: dict) -> str:
-    return f"${f['balance']:.2f}" if f["balance"] is not None else "$?"
+    return money_text(f["balance"]) if f["balance"] is not None else "$?"
 
 
 def openrouter_text_for_mode(mode: str, f: dict) -> str:
@@ -1633,8 +1541,15 @@ def openrouter_detail_rows(f: dict) -> list[tuple[str, int | None, str]]:
     """(label, bar_pct or None, text) rows shared by tooltip and popup."""
     rows: list[tuple[str, int | None, str]] = []
     if f["balance"] is not None:
-        rows.append(("Balance", f["pct_used"],
-                     f"${f['balance']:.2f} left · ${f['spent']:.2f}/${f['total']:.2f} used"))
+        left = f"{money_text(f['balance'])} left"
+        runway = f["runway_days"]
+        if f["burn_per_day"] <= 0:
+            left += " · no spend this month"
+        elif runway is not None:
+            days = "> 365 days" if runway > 365 else f"~{round(runway)} day{'' if round(runway) == 1 else 's'}"
+            left += f" · {days} at ${f['burn_per_day']:.2f}/day ({f['burn_basis']})"
+        rows.append(("Balance", None, left))
+        rows.append(("Bought", None, f"spent ${f['spent']:.2f} of ${f['total']:.2f} bought"))
     else:
         reason = f" ({f['balance_error']})" if f.get("balance_error") else ""
         rows.append(("Balance", None, f"unavailable{reason}"))
@@ -1645,7 +1560,7 @@ def openrouter_detail_rows(f: dict) -> list[tuple[str, int | None, str]]:
     if f["limit"] is not None:
         left = f["limit_remaining"] if f["limit_remaining"] is not None else f["limit"]
         reset = f" · resets {f['limit_reset']}" if f["limit_reset"] else ""
-        rows.append(("Key limit", f["limit_pct"], f"${left:.2f}/${f['limit']:.2f} left{reset}"))
+        rows.append(("Key cap", f["limit_pct"], f"${left:.2f}/${f['limit']:.2f} left{reset}"))
     return rows
 
 
@@ -2016,10 +1931,13 @@ def short_window_label(seconds: int | None, fallback: str) -> str:
     return {"5-hour": "5h", "7-day": "7d", "30-day": "30d"}.get(label, label)
 
 
-def gauge_balance_text(balance: float | None) -> str:
+def gauge_balance_text(balance: float | None, runway_days: float | None = None) -> str:
     if balance is None:
         return "$?"
-    return f"${balance:.1f}" if balance < 10 else f"${balance:.0f}"
+    text = f"${balance:.1f}" if balance < 10 else f"${balance:.0f}"
+    if runway_days is not None and runway_days < 30:
+        text += f" · {round(runway_days)}d"
+    return text
 
 
 def gauge_segments(
@@ -2076,7 +1994,7 @@ def gauge_segments(
         bal = orr["balance"]
         busy = (bal is None or bal < floor or (orr.get("spend_day") or 0) > 0
                 or bool(orr["limit"] and orr["limit_pct"] >= SHOW_AT_PCT))
-        add("OR", [], gauge_balance_text(bal), orr["status_class"], busy)
+        add("OR", [], gauge_balance_text(bal, orr.get("runway_days")), orr["status_class"], busy)
     elif errors.get("OR"):
         segs.append({"label": "OR", "error": True})
     return segs
